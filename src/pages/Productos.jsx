@@ -23,9 +23,37 @@ function formatoFecha(fechaTexto) {
 }
 
 const PAGE_SIZE = 50;
-const RESTOCK_VACIO = { cantidad: '', costo: '', costoMoneda: 'USD', envio_pct: '', iva_pct: '', margen_venta_pct: '' };
+const RESTOCK_VACIO = { cantidad: '', costo: '', costoMoneda: 'ARS', envio_pct: '', iva_pct: '', margen_venta_pct: '' };
 
-const VACIO = { codigo: '', descripcion: '', categoria: '', stock: '', costo: '', costoMoneda: 'USD', precio_manual_ars: '', margen_venta_pct: '', envio_pct: '', iva_pct: '' };
+const VACIO = { codigo: '', descripcion: '', categoria: '', stock: '', costo: '', costoMoneda: 'ARS', precio_manual_ars: '', margen_venta_pct: '', envio_pct: '', iva_pct: '' };
+
+// Calcula en vivo el precio final mientras se va cargando costo/iva/envio/
+// margen, igual que el programa viejo -- sin esperar a guardar. Mismo orden
+// que el backend: costo -> +IVA% -> +envio% -> +margen% (ver utils/precio.js).
+// El costo se puede estar cargando en ARS o en USD (según el selector de
+// moneda); todo lo demás se calcula directo en pesos para no perder
+// precisión por ida y vuelta de conversión.
+function previsualizarPrecio(form, config, cotizacion) {
+  if (form.precio_manual_ars !== '' && form.precio_manual_ars != null) {
+    const manual = parseNumero(form.precio_manual_ars);
+    return manual != null ? { precio: manual, esManual: true } : null;
+  }
+  const costoNum = parseNumero(form.costo);
+  if (costoNum == null) return null;
+  const costoArs = form.costoMoneda === 'ARS' ? costoNum : costoNum * (cotizacion || 0);
+  if (!costoArs) return null;
+
+  const ivaPct = form.iva_pct !== '' && form.iva_pct != null ? parseNumero(form.iva_pct) : Number(config.iva_pct || 0);
+  const envioPct = form.envio_pct !== '' && form.envio_pct != null ? parseNumero(form.envio_pct) : Number(config.envio_pct || 0);
+  const margenPct = form.margen_venta_pct !== '' && form.margen_venta_pct != null ? parseNumero(form.margen_venta_pct) : Number(config.margen_venta_pct || 0);
+
+  const costoConIva = costoArs * (1 + (ivaPct || 0) / 100);
+  const costoFinalArs = costoConIva * (1 + (envioPct || 0) / 100);
+  const precioSinRedondear = costoFinalArs * (1 + (margenPct || 0) / 100);
+  const unidad = Number(config.redondeo_unidad || 10);
+  const precio = Math.round(precioSinRedondear / unidad) * unidad;
+  return { precio, costoFinalArs, esManual: false };
+}
 
 // --- Importación desde una planilla exportada como CSV ---
 // Se parsea acá mismo en el navegador (sin librerías de terceros -- las que
@@ -128,6 +156,7 @@ export default function Productos() {
   const [guardando, setGuardando] = useState(false);
   const [mostrarForm, setMostrarForm] = useState(false);
   const [cotizacion, setCotizacion] = useState(0);
+  const [configFull, setConfigFull] = useState({});
 
   // --- Modal "Editar producto": historial, datos generales editables,
   // lotes (cada uno editable por separado) y restock, todo en un solo lugar ---
@@ -143,7 +172,7 @@ export default function Productos() {
   // Edición de un lote puntual (cuando se cargó mal el costo/envío/IVA/
   // cantidad de un restock reciente).
   const [loteEditId, setLoteEditId] = useState(null);
-  const [loteEditForm, setLoteEditForm] = useState({ cantidad: '', costo: '', costoMoneda: 'USD', envio_pct: '', iva_pct: '', margen_venta_pct: '' });
+  const [loteEditForm, setLoteEditForm] = useState({ cantidad: '', costo: '', costoMoneda: 'ARS', envio_pct: '', iva_pct: '', margen_venta_pct: '' });
   const [guardandoLote, setGuardandoLote] = useState(false);
   const [errorLote, setErrorLote] = useState(null);
 
@@ -199,6 +228,7 @@ export default function Productos() {
       setProductosCompletos(dataProductos.productos);
       setCategorias(dataCategorias.categorias);
       setCotizacion(Number(config.cotizacion_dolar || 0));
+      setConfigFull(config);
       try { setRecargaFilas(JSON.parse(config.recargas_garrafa || '[]')); } catch { setRecargaFilas([]); }
     } catch (err) {
       setError(err.message);
@@ -279,14 +309,17 @@ export default function Productos() {
   }
 
   // --- Modal Editar: historial + datos generales + lotes + restock ---
+  // El costo se guarda siempre en USD por dentro, pero se muestra en pesos
+  // (convertido con la cotización actual) porque es como ella lo quiere ver
+  // y cargar -- el USD queda solo como un detalle interno.
   function datosGeneralesDesdeProducto(p) {
     return {
       codigo: p.codigo || '',
       descripcion: p.descripcion || '',
       categoria: p.categoria || '',
       stock: p.stock ?? '',
-      costo: p.costo ?? '',
-      costoMoneda: 'USD',
+      costo: p.costo != null && cotizacion ? Number((Number(p.costo) * cotizacion).toFixed(2)) : (p.costo ?? ''),
+      costoMoneda: 'ARS',
       precio_manual_ars: p.precio_manual_ars ?? '',
       margen_venta_pct: p.margen_venta_pct ?? '',
       envio_pct: p.envio_pct ?? '',
@@ -374,12 +407,13 @@ export default function Productos() {
   function abrirEditarLote(lote) {
     setLoteEditId(lote.id);
     setErrorLote(null);
+    // Si el lote es viejo (de antes de guardar el desglose) no hay costo
+    // base propio -- se arranca desde el costo final como punto de partida.
+    const costoUsdBase = lote.costo_usd_base ?? lote.costo_usd ?? null;
     setLoteEditForm({
       cantidad: lote.cantidad ?? '',
-      // Si el lote es viejo (de antes de guardar el desglose) no hay costo
-      // base propio -- se arranca desde el costo final como punto de partida.
-      costo: lote.costo_usd_base ?? lote.costo_usd ?? '',
-      costoMoneda: 'USD',
+      costo: costoUsdBase != null && cotizacion ? Number((Number(costoUsdBase) * cotizacion).toFixed(2)) : (costoUsdBase ?? ''),
+      costoMoneda: 'ARS',
       envio_pct: lote.envio_pct ?? '',
       iva_pct: lote.iva_pct ?? '',
       margen_venta_pct: lote.margen_venta_pct ?? '',
@@ -771,12 +805,12 @@ export default function Productos() {
               </select>
             </label>
             <label className="campo">
-              <span>Envío % (opcional)</span>
-              <input type="text" inputMode="decimal" placeholder="Envío %" value={nuevo.envio_pct} onChange={(e) => setNuevo((n) => ({ ...n, envio_pct: e.target.value }))} style={{ width: 130 }} />
-            </label>
-            <label className="campo">
               <span>IVA % (opcional)</span>
               <input type="text" inputMode="decimal" placeholder="IVA %" value={nuevo.iva_pct} onChange={(e) => setNuevo((n) => ({ ...n, iva_pct: e.target.value }))} style={{ width: 120 }} />
+            </label>
+            <label className="campo">
+              <span>Envío % (opcional)</span>
+              <input type="text" inputMode="decimal" placeholder="Envío %" value={nuevo.envio_pct} onChange={(e) => setNuevo((n) => ({ ...n, envio_pct: e.target.value }))} style={{ width: 130 }} />
             </label>
             <label className="campo">
               <span>Margen % (opcional)</span>
@@ -788,13 +822,19 @@ export default function Productos() {
             </label>
             <button type="submit" className="btn-primary" disabled={guardando}>{guardando ? 'Guardando...' : 'Guardar'}</button>
           </form>
+          {(() => {
+            const preview = previsualizarPrecio(nuevo, configFull, cotizacion);
+            return preview ? (
+              <p style={{ fontSize: 14, marginTop: 10, marginBottom: 0 }}>
+                Precio de venta estimado: <strong>{formatoMoneda(preview.precio)}</strong>
+                {preview.esManual && <span className="muted"> (precio manual)</span>}
+              </p>
+            ) : null;
+          })()}
           <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
             Si no sabés el costo todavía, dejalo vacío y cargá un "Precio manual ARS": ese precio se usa tal cual, sin recalcular.
-            Envío % e IVA % son opcionales y se suman al costo para armar el "costo final" (costo × (1 + envío% + IVA%)); si los dejás vacíos, el costo final es igual al costo cargado (o usan el valor general de Configuración, si hay uno).
+            Al costo se le suma primero el IVA%, y sobre ese resultado el envío% (costo final); son opcionales, y si los dejás vacíos usan el valor general de Configuración.
             El margen se aplica sobre ese costo final, y también es opcional — si no lo cargás, se usa el margen general de Configuración.
-            {nuevo.costoMoneda === 'ARS' && cotizacion > 0 && (
-              <> El costo en pesos se convierte a USD con la cotización actual (${cotizacion}).</>
-            )}
             {' '}Si el código ya existe, esto se toma como un <strong>restock</strong> (se suma stock nuevo al producto existente).
           </p>
         </div>
@@ -927,6 +967,15 @@ export default function Productos() {
                   <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 10 }}>
                     El costo primero se le suma el IVA%, y sobre eso el envío% (costo final). El margen se aplica después, sobre el costo final convertido a pesos. Si dejás IVA/Envío/Margen vacíos, usan el valor general de Configuración.
                   </p>
+                  {(() => {
+                    const preview = previsualizarPrecio(generalForm, configFull, cotizacion);
+                    return preview ? (
+                      <p style={{ fontSize: 14, marginTop: 0, marginBottom: 10 }}>
+                        Precio de venta estimado: <strong>{formatoMoneda(preview.precio)}</strong>
+                        {preview.esManual && <span className="muted"> (precio manual)</span>}
+                      </p>
+                    ) : null;
+                  })()}
                   <button type="button" className="btn-primary" disabled={guardandoGeneral} onClick={() => guardarGeneral(p)} style={{ marginBottom: 20 }}>
                     {guardandoGeneral ? 'Guardando...' : 'Guardar datos generales'}
                   </button>
@@ -977,6 +1026,14 @@ export default function Productos() {
                                 El costo acá es el costo BASE del lote (antes de IVA/envío) -- se recalcula el costo final solo.
                                 {l.costo_usd_base == null && ' Este lote es anterior a esta función y no tenía el desglose guardado: el costo ya viene precargado con el costo final de entonces -- revisalo antes de guardar.'}
                               </p>
+                              {(() => {
+                                const preview = previsualizarPrecio(loteEditForm, configFull, cotizacion);
+                                return preview ? (
+                                  <p style={{ fontSize: 14, marginTop: 6, marginBottom: 0 }}>
+                                    Precio de venta estimado con este lote: <strong>{formatoMoneda(preview.precio)}</strong>
+                                  </p>
+                                ) : null;
+                              })()}
                             </div>
                           ) : (
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -1015,15 +1072,23 @@ export default function Productos() {
                       <option value="USD">USD</option>
                       <option value="ARS">ARS</option>
                     </select>
-                    <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
                     <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={restockForm.iva_pct} onChange={(e) => setRestockForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
+                    <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
                     <input type="text" inputMode="decimal" placeholder="Margen % (opcional)" value={restockForm.margen_venta_pct} onChange={(e) => setRestockForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 140 }} />
                     <button type="button" className="btn-primary" disabled={guardandoRestock} onClick={() => confirmarRestock(p)}>
                       {guardandoRestock ? 'Guardando...' : 'Confirmar restock'}
                     </button>
                   </div>
+                  {(() => {
+                    const preview = previsualizarPrecio(restockForm, configFull, cotizacion);
+                    return preview ? (
+                      <p style={{ fontSize: 14, marginTop: 8, marginBottom: 0 }}>
+                        Precio de venta estimado con este lote: <strong>{formatoMoneda(preview.precio)}</strong>
+                      </p>
+                    ) : null;
+                  })()}
                   <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                    Si dejás Envío/IVA/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
+                    Si dejás IVA/Envío/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
                   </p>
                 </>
                 );
