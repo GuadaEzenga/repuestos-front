@@ -1,0 +1,53 @@
+:root {
+  /* Paleta tomada del logo de Casa de Refrigeración (petróleo/teal + azul
+     noche), en vez del azul genérico de plantilla que tenía antes. */
+  --bg: #f3f7f8;
+  --surface: #ffffff;
+  --border: #e1e9ea;
+  --text: #15202b;
+  --text-muted: #647079;
+  --primary: #166e79;
+  --primary-dark: #0e4f58;
+  --primary-pale: #d8f0f3;
+  --success: #16a34a;
+  --danger: #dc2626;
+  --warning: #d97706;
+  --sidebar-bg: #0d2035;
+  --sidebar-text: #aebbce;
+  --sidebar-active: #166e79;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(13, 32, 53, 0.08);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+/* Sin esto, una tabla ancha o un gráfico en una pantalla de celular podía
+   empujar TODO el ancho de la página hacia afuera (en vez de scrollear solo
+   adentro de su propio panel, que es lo que .panel ya hace con
+   overflow-x: auto) -- eso es lo que hacía que en el celular se vea "roto"
+   en vez de adaptarse. Con esto, lo que desborda queda contenido adentro
+   de cada panel/tabla, no de toda la pantalla. */
+html, body { overflow-x: hidden; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: 14px;
+}
+
+a { color: var(--primary); }
+
+.muted { color: var(--text-muted); }

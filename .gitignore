@@ -1,0 +1,32 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Variables de entorno (la URL de la API cambia entre local y produccion)
+.env
+.env.*
+
+# Carpetas duplicadas que aparecieron solas (conflicto de sincronizacion de iCloud/OneDrive)
+dist\ 2
+node_modules\ 3
