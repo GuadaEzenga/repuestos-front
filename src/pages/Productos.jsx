@@ -129,15 +129,27 @@ export default function Productos() {
   const [mostrarForm, setMostrarForm] = useState(false);
   const [cotizacion, setCotizacion] = useState(0);
 
-  // --- Detalle por producto (costo usd/ars, precio, cantidad vendida, lotes) ---
+  // --- Modal "Editar producto": historial, datos generales editables,
+  // lotes (cada uno editable por separado) y restock, todo en un solo lugar ---
   const [detalleAbiertoId, setDetalleAbiertoId] = useState(null);
   const [detalleData, setDetalleData] = useState(null);
   const [cargandoDetalle, setCargandoDetalle] = useState(false);
   const [errorDetalle, setErrorDetalle] = useState(null);
 
+  const [generalForm, setGeneralForm] = useState(VACIO);
+  const [guardandoGeneral, setGuardandoGeneral] = useState(false);
+  const [errorGeneral, setErrorGeneral] = useState(null);
+
+  // Edición de un lote puntual (cuando se cargó mal el costo/envío/IVA/
+  // cantidad de un restock reciente).
+  const [loteEditId, setLoteEditId] = useState(null);
+  const [loteEditForm, setLoteEditForm] = useState({ cantidad: '', costo: '', costoMoneda: 'USD', envio_pct: '', iva_pct: '', margen_venta_pct: '' });
+  const [guardandoLote, setGuardandoLote] = useState(false);
+  const [errorLote, setErrorLote] = useState(null);
+
   // --- Restock rápido (sumar stock a un producto existente sin volver a
-  // tipear el código en el form de "Cargar producto") ---
-  const [restockAbiertoId, setRestockAbiertoId] = useState(null);
+  // tipear el código en el form de "Cargar producto") -- vive dentro del
+  // modal de Editar, no como fila aparte en la tabla.
   const [restockForm, setRestockForm] = useState(RESTOCK_VACIO);
   const [guardandoRestock, setGuardandoRestock] = useState(false);
   const [errorRestock, setErrorRestock] = useState(null);
@@ -266,43 +278,149 @@ export default function Productos() {
     }
   }
 
-  // --- Detalle ---
-  async function toggleDetalle(producto) {
-    if (detalleAbiertoId === producto.id) {
-      setDetalleAbiertoId(null);
-      setDetalleData(null);
-      return;
-    }
-    setRestockAbiertoId(null);
-    setDetalleAbiertoId(producto.id);
-    setDetalleData(null);
-    setErrorDetalle(null);
+  // --- Modal Editar: historial + datos generales + lotes + restock ---
+  function datosGeneralesDesdeProducto(p) {
+    return {
+      codigo: p.codigo || '',
+      descripcion: p.descripcion || '',
+      categoria: p.categoria || '',
+      stock: p.stock ?? '',
+      costo: p.costo ?? '',
+      costoMoneda: 'USD',
+      precio_manual_ars: p.precio_manual_ars ?? '',
+      margen_venta_pct: p.margen_venta_pct ?? '',
+      envio_pct: p.envio_pct ?? '',
+      iva_pct: p.iva_pct ?? '',
+    };
+  }
+
+  // Refresca el detalle del modal Y la fila de la tabla con el mismo cálculo
+  // (misma cotización, mismo momento) para que nunca queden desincronizados.
+  async function refrescarDetalle(productoId) {
     setCargandoDetalle(true);
+    setErrorDetalle(null);
     try {
-      const data = await api.get(`/productos/${producto.id}/detalle`);
+      const data = await api.get(`/productos/${productoId}/detalle`);
       setDetalleData(data);
+      setProductosCompletos((prev) => prev.map((p) => (p.id === productoId ? {
+        ...p,
+        ...data.producto,
+        costo_final: data.costo_unitario_usd,
+        costo_final_ars: data.costo_unitario_ars,
+        costo_ars: data.producto.costo != null && data.cotizacion_dolar ? Number(data.producto.costo) * data.cotizacion_dolar : null,
+        precio: data.precio_ars,
+      } : p)));
+      return data;
     } catch (err) {
       setErrorDetalle(err.message);
+      return null;
     } finally {
       setCargandoDetalle(false);
     }
   }
 
-  // --- Restock rápido ---
-  function abrirRestock(producto) {
-    if (restockAbiertoId === producto.id) {
-      setRestockAbiertoId(null);
+  async function abrirEditar(producto) {
+    if (detalleAbiertoId === producto.id) {
+      setDetalleAbiertoId(null);
+      setDetalleData(null);
       return;
     }
-    setDetalleAbiertoId(null);
-    setErrorRestock(null);
+    setDetalleAbiertoId(producto.id);
+    setDetalleData(null);
+    setGeneralForm(datosGeneralesDesdeProducto(producto));
+    setErrorGeneral(null);
+    setLoteEditId(null);
+    setErrorLote(null);
     setRestockForm(RESTOCK_VACIO);
-    setRestockAbiertoId(producto.id);
+    setErrorRestock(null);
+    await refrescarDetalle(producto.id);
   }
 
+  function cerrarEditar() {
+    setDetalleAbiertoId(null);
+    setDetalleData(null);
+  }
+
+  async function guardarGeneral(producto) {
+    setGuardandoGeneral(true);
+    setErrorGeneral(null);
+    try {
+      let costoUsd = parseNumero(generalForm.costo);
+      if (costoUsd != null && generalForm.costoMoneda === 'ARS') {
+        if (!cotizacion) throw new Error('No se pudo convertir: no hay cotización del dólar cargada en Configuración.');
+        costoUsd = costoUsd / cotizacion;
+      }
+      await api.put(`/productos/${producto.id}`, {
+        codigo: generalForm.codigo || null,
+        descripcion: generalForm.descripcion,
+        categoria: generalForm.categoria || null,
+        stock: parseNumero(generalForm.stock) ?? 0,
+        costo: costoUsd,
+        precio_manual_ars: parseNumero(generalForm.precio_manual_ars),
+        margen_venta_pct: parseNumero(generalForm.margen_venta_pct),
+        envio_pct: parseNumero(generalForm.envio_pct),
+        iva_pct: parseNumero(generalForm.iva_pct),
+      });
+      await refrescarDetalle(producto.id);
+      toast('Datos del producto guardados ✓');
+    } catch (err) {
+      setErrorGeneral(err.message);
+    } finally {
+      setGuardandoGeneral(false);
+    }
+  }
+
+  // --- Edición de un lote puntual ---
+  function abrirEditarLote(lote) {
+    setLoteEditId(lote.id);
+    setErrorLote(null);
+    setLoteEditForm({
+      cantidad: lote.cantidad ?? '',
+      // Si el lote es viejo (de antes de guardar el desglose) no hay costo
+      // base propio -- se arranca desde el costo final como punto de partida.
+      costo: lote.costo_usd_base ?? lote.costo_usd ?? '',
+      costoMoneda: 'USD',
+      envio_pct: lote.envio_pct ?? '',
+      iva_pct: lote.iva_pct ?? '',
+      margen_venta_pct: lote.margen_venta_pct ?? '',
+    });
+  }
+
+  function cerrarEditarLote() {
+    setLoteEditId(null);
+    setErrorLote(null);
+  }
+
+  async function guardarLote(productoId, loteId) {
+    setGuardandoLote(true);
+    setErrorLote(null);
+    try {
+      let costoUsd = parseNumero(loteEditForm.costo);
+      if (costoUsd != null && loteEditForm.costoMoneda === 'ARS') {
+        if (!cotizacion) throw new Error('No se pudo convertir: no hay cotización del dólar cargada en Configuración.');
+        costoUsd = costoUsd / cotizacion;
+      }
+      await api.put(`/productos/${productoId}/lotes/${loteId}`, {
+        cantidad: parseNumero(loteEditForm.cantidad),
+        costo_usd_base: costoUsd,
+        envio_pct: parseNumero(loteEditForm.envio_pct),
+        iva_pct: parseNumero(loteEditForm.iva_pct),
+        margen_venta_pct: parseNumero(loteEditForm.margen_venta_pct),
+      });
+      setLoteEditId(null);
+      await refrescarDetalle(productoId);
+      toast('Lote actualizado ✓');
+    } catch (err) {
+      setErrorLote(err.message);
+    } finally {
+      setGuardandoLote(false);
+    }
+  }
+
+  // --- Restock rápido (dentro del modal) ---
   async function confirmarRestock(producto) {
     if (!producto.codigo) {
-      setErrorRestock('Este producto no tiene código cargado -- el restock rápido necesita un código para identificar qué producto reponer. Cargale un código primero (columna Código) o usá "+ Nuevo producto" con el mismo código.');
+      setErrorRestock('Este producto no tiene código cargado -- el restock rápido necesita un código para identificar qué producto reponer. Cargale un código primero (en "Datos generales") o usá "+ Nuevo producto" con el mismo código.');
       return;
     }
     const cantidadRestock = parseNumero(restockForm.cantidad);
@@ -329,10 +447,10 @@ export default function Productos() {
         iva_pct: parseNumero(restockForm.iva_pct),
         margen_venta_pct: parseNumero(restockForm.margen_venta_pct),
       });
-      setProductosCompletos((prev) => prev.map((p) => (p.id === resultado.id ? resultado : p)));
+      setProductosCompletos((prev) => prev.map((p) => (p.id === resultado.id ? { ...p, ...resultado } : p)));
       toast(resultado.mensaje || 'Restock registrado ✓', { duration: 5000 });
-      setRestockAbiertoId(null);
       setRestockForm(RESTOCK_VACIO);
+      await refrescarDetalle(producto.id);
     } catch (err) {
       setErrorRestock(err.message);
     } finally {
@@ -743,6 +861,178 @@ export default function Productos() {
         </div>
       )}
 
+      {detalleAbiertoId != null && (
+        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) cerrarEditar(); }}>
+          <div className="modal-ventana modal-ventana-ancha">
+            <div className="modal-header">
+              <h2>Editar producto{generalForm.descripcion ? `: ${generalForm.descripcion}` : ''}</h2>
+              <button type="button" className="modal-cerrar" onClick={cerrarEditar} aria-label="Cerrar">×</button>
+            </div>
+            <div className="modal-body">
+              {cargandoDetalle && !detalleData && <div className="loading">Cargando...</div>}
+              {errorDetalle && <div className="error-box">{errorDetalle}</div>}
+
+              {detalleData && (() => {
+                const p = productosCompletos.find((x) => x.id === detalleAbiertoId) || detalleData.producto;
+                return (
+                <>
+                  {/* --- Datos generales (editables) --- */}
+                  <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Datos generales</p>
+                  {errorGeneral && <div className="error-box">{errorGeneral}</div>}
+                  <div className="form-row" style={{ flexWrap: 'wrap', gap: 10, marginBottom: 10 }}>
+                    <label className="campo">
+                      <span>Código</span>
+                      <input value={generalForm.codigo} onChange={(e) => setGeneralForm((f) => ({ ...f, codigo: e.target.value }))} style={{ width: 100 }} />
+                    </label>
+                    <label className="campo" style={{ flex: 1, minWidth: 180 }}>
+                      <span>Descripción</span>
+                      <input value={generalForm.descripcion} onChange={(e) => setGeneralForm((f) => ({ ...f, descripcion: e.target.value }))} />
+                    </label>
+                    <label className="campo">
+                      <span>Categoría</span>
+                      <input value={generalForm.categoria} onChange={(e) => setGeneralForm((f) => ({ ...f, categoria: e.target.value }))} style={{ width: 130 }} />
+                    </label>
+                    <label className="campo">
+                      <span>Stock</span>
+                      <input type="text" inputMode="decimal" value={generalForm.stock} onChange={(e) => setGeneralForm((f) => ({ ...f, stock: e.target.value }))} style={{ width: 80 }} />
+                    </label>
+                    <label className="campo">
+                      <span>{generalForm.costoMoneda === 'ARS' ? 'Costo en $' : 'Costo en USD'}</span>
+                      <input type="text" inputMode="decimal" value={generalForm.costo} onChange={(e) => setGeneralForm((f) => ({ ...f, costo: e.target.value }))} style={{ width: 100 }} />
+                    </label>
+                    <label className="campo">
+                      <span>Moneda</span>
+                      <select value={generalForm.costoMoneda} onChange={(e) => setGeneralForm((f) => ({ ...f, costoMoneda: e.target.value }))} style={{ width: 80 }}>
+                        <option value="USD">USD</option>
+                        <option value="ARS">ARS</option>
+                      </select>
+                    </label>
+                    <label className="campo">
+                      <span>IVA %</span>
+                      <input type="text" inputMode="decimal" placeholder="—" value={generalForm.iva_pct} onChange={(e) => setGeneralForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 80 }} />
+                    </label>
+                    <label className="campo">
+                      <span>Envío %</span>
+                      <input type="text" inputMode="decimal" placeholder="—" value={generalForm.envio_pct} onChange={(e) => setGeneralForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 80 }} />
+                    </label>
+                    <label className="campo">
+                      <span>Margen %</span>
+                      <input type="text" inputMode="decimal" placeholder="—" value={generalForm.margen_venta_pct} onChange={(e) => setGeneralForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 80 }} />
+                    </label>
+                    <label className="campo">
+                      <span>Precio manual ARS</span>
+                      <input type="text" inputMode="decimal" placeholder="—" value={generalForm.precio_manual_ars} onChange={(e) => setGeneralForm((f) => ({ ...f, precio_manual_ars: e.target.value }))} style={{ width: 120 }} />
+                    </label>
+                  </div>
+                  <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 10 }}>
+                    El costo primero se le suma el IVA%, y sobre eso el envío% (costo final). El margen se aplica después, sobre el costo final convertido a pesos. Si dejás IVA/Envío/Margen vacíos, usan el valor general de Configuración.
+                  </p>
+                  <button type="button" className="btn-primary" disabled={guardandoGeneral} onClick={() => guardarGeneral(p)} style={{ marginBottom: 20 }}>
+                    {guardandoGeneral ? 'Guardando...' : 'Guardar datos generales'}
+                  </button>
+
+                  {/* --- Resumen --- */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginBottom: 20 }}>
+                    <div style={{ minWidth: 220 }}>
+                      <p style={{ margin: '0 0 6px', fontWeight: 600 }}>Resumen</p>
+                      <p style={{ margin: '2px 0' }}>Costo final: <strong>{detalleData.costo_unitario_ars != null ? formatoMoneda(detalleData.costo_unitario_ars) : '—'}</strong></p>
+                      <p style={{ margin: '2px 0' }}>Precio de venta: <strong>{detalleData.precio_ars != null ? formatoMoneda(detalleData.precio_ars) : '—'}</strong></p>
+                      <p style={{ margin: '2px 0' }}>Stock: <strong>{detalleData.stock}</strong></p>
+                      <p style={{ margin: '2px 0' }}>Cantidad vendida (histórico): <strong>{detalleData.cantidad_vendida}</strong></p>
+                    </div>
+                    <div style={{ minWidth: 220 }}>
+                      <p style={{ margin: '0 0 6px', fontWeight: 600 }}>En USD (solo acá)</p>
+                      <p style={{ margin: '2px 0' }}>Cotización dólar hoy: <strong>{detalleData.cotizacion_dolar ? formatoMoneda(detalleData.cotizacion_dolar) : '—'}</strong></p>
+                      <p style={{ margin: '2px 0' }}>Costo unitario: <strong>{detalleData.costo_unitario_usd != null ? formatoMoneda(detalleData.costo_unitario_usd, 'USD') : '—'}</strong></p>
+                      <p style={{ margin: '2px 0' }}>Costo unitario total (todo el stock): <strong>{detalleData.costo_unitario_total_usd != null ? formatoMoneda(detalleData.costo_unitario_total_usd, 'USD') : '—'}</strong></p>
+                    </div>
+                  </div>
+
+                  {/* --- Lotes --- */}
+                  <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Lotes (historial de stock)</p>
+                  {detalleData.lotes.length === 0 && <p className="muted" style={{ margin: '0 0 14px' }}>Sin lotes registrados.</p>}
+                  {detalleData.lotes.length > 0 && (
+                    <div style={{ marginBottom: 20 }}>
+                      {detalleData.lotes.map((l) => (
+                        <div key={l.id} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
+                          {loteEditId === l.id ? (
+                            <div>
+                              {errorLote && <div className="error-box">{errorLote}</div>}
+                              <div className="form-row" style={{ flexWrap: 'wrap', gap: 10 }}>
+                                <input type="text" inputMode="decimal" placeholder="Cantidad" value={loteEditForm.cantidad} onChange={(e) => setLoteEditForm((f) => ({ ...f, cantidad: e.target.value }))} style={{ width: 90 }} />
+                                <input type="text" inputMode="decimal" placeholder={loteEditForm.costoMoneda === 'ARS' ? 'Costo en $' : 'Costo en USD'} value={loteEditForm.costo} onChange={(e) => setLoteEditForm((f) => ({ ...f, costo: e.target.value }))} style={{ width: 110 }} />
+                                <select value={loteEditForm.costoMoneda} onChange={(e) => setLoteEditForm((f) => ({ ...f, costoMoneda: e.target.value }))} style={{ width: 80 }}>
+                                  <option value="USD">USD</option>
+                                  <option value="ARS">ARS</option>
+                                </select>
+                                <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={loteEditForm.iva_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
+                                <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={loteEditForm.envio_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
+                                <input type="text" inputMode="decimal" placeholder="Margen %" value={loteEditForm.margen_venta_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 100 }} />
+                                <button type="button" className="btn-primary" disabled={guardandoLote} onClick={() => guardarLote(detalleAbiertoId, l.id)}>
+                                  {guardandoLote ? 'Guardando...' : 'Guardar lote'}
+                                </button>
+                                <button type="button" className="btn-secondary" onClick={cerrarEditarLote}>Cancelar</button>
+                              </div>
+                              <p className="muted" style={{ fontSize: 12, marginTop: 6, marginBottom: 0 }}>
+                                El costo acá es el costo BASE del lote (antes de IVA/envío) -- se recalcula el costo final solo.
+                                {l.costo_usd_base == null && ' Este lote es anterior a esta función y no tenía el desglose guardado: el costo ya viene precargado con el costo final de entonces -- revisalo antes de guardar.'}
+                              </p>
+                            </div>
+                          ) : (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                              <span>{l.cantidad} producto{Number(l.cantidad) === 1 ? '' : 's'} · {formatoPct(l.margen_venta_pct)} ganancia · {formatoFecha(l.fecha)}</span>
+                              <button type="button" className="btn-link" onClick={() => abrirEditarLote(l)}>Editar</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* --- Restock rápido --- */}
+                  <p style={{ margin: '0 0 8px', fontWeight: 600 }}>+ Nuevo restock (lote nuevo)</p>
+                  {errorRestock && <div className="error-box">{errorRestock}</div>}
+                  <div className="form-row" style={{ flexWrap: 'wrap', gap: 10 }}>
+                    <input
+                      type="text" inputMode="decimal"
+                      placeholder="Cantidad que entró"
+                      value={restockForm.cantidad}
+                      onChange={(e) => setRestockForm((f) => ({ ...f, cantidad: e.target.value }))}
+                      style={{ width: 140 }}
+                    />
+                    <input
+                      type="text" inputMode="decimal"
+                      placeholder={restockForm.costoMoneda === 'ARS' ? 'Costo en $' : 'Costo en USD'}
+                      value={restockForm.costo}
+                      onChange={(e) => setRestockForm((f) => ({ ...f, costo: e.target.value }))}
+                      style={{ width: 120 }}
+                    />
+                    <select
+                      value={restockForm.costoMoneda}
+                      onChange={(e) => setRestockForm((f) => ({ ...f, costoMoneda: e.target.value }))}
+                      style={{ width: 80 }}
+                    >
+                      <option value="USD">USD</option>
+                      <option value="ARS">ARS</option>
+                    </select>
+                    <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
+                    <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={restockForm.iva_pct} onChange={(e) => setRestockForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
+                    <input type="text" inputMode="decimal" placeholder="Margen % (opcional)" value={restockForm.margen_venta_pct} onChange={(e) => setRestockForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 140 }} />
+                    <button type="button" className="btn-primary" disabled={guardandoRestock} onClick={() => confirmarRestock(p)}>
+                      {guardandoRestock ? 'Guardando...' : 'Confirmar restock'}
+                    </button>
+                  </div>
+                  <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
+                    Si dejás Envío/IVA/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
+                  </p>
+                </>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {mostrarMargenMasivo && (
         <div className="panel" style={{ marginBottom: 18 }}>
           <h2>Actualizar margen de ganancia (masivo)</h2>
@@ -890,18 +1180,14 @@ export default function Productos() {
                   <th>Descripción</th>
                   <th>Categoría</th>
                   <th>Stock</th>
-                  <th>Costo (USD)</th>
-                  <th>Envío %</th>
-                  <th>IVA %</th>
-                  <th>Margen %</th>
-                  <th>Costo final (USD)</th>
-                  <th>Precio (ARS)</th>
+                  <th>Costo final</th>
+                  <th>Precio</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {productosVisibles.length === 0 && (
-                  <tr><td colSpan={12} className="muted">Sin productos que coincidan</td></tr>
+                  <tr><td colSpan={8} className="muted">Sin productos que coincidan</td></tr>
                 )}
                 {productosVisibles.map((p) => (
                   <Fragment key={p.id}>
@@ -922,7 +1208,7 @@ export default function Productos() {
                         className="input-inline"
                         defaultValue={p.descripcion || ''}
                         onBlur={(e) => guardarCampo(p.id, 'descripcion', e.target.value)}
-                        style={{ width: '100%', minWidth: 180 }}
+                        style={{ width: '100%', minWidth: 280 }}
                       />
                     </td>
                     <td>
@@ -945,50 +1231,7 @@ export default function Productos() {
                       />
                     </td>
                     <td>
-                      <input
-                        type="text" inputMode="decimal"
-                        className="input-inline"
-                        defaultValue={p.costo ?? ''}
-                        onBlur={(e) => guardarCampo(p.id, 'costo', parseNumero(e.target.value))}
-                        style={{ width: 90 }}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text" inputMode="decimal"
-                        className="input-inline"
-                        defaultValue={p.envio_pct ?? ''}
-                        placeholder="—"
-                        onBlur={(e) => guardarCampo(p.id, 'envio_pct', parseNumero(e.target.value))}
-                        style={{ width: 65 }}
-                        title="Envío % propio de este producto (vacío = usa el general de Configuración)"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text" inputMode="decimal"
-                        className="input-inline"
-                        defaultValue={p.iva_pct ?? ''}
-                        placeholder="—"
-                        onBlur={(e) => guardarCampo(p.id, 'iva_pct', parseNumero(e.target.value))}
-                        style={{ width: 65 }}
-                        title="IVA % propio de este producto (vacío = usa el general de Configuración)"
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="text" inputMode="decimal"
-                        className={`input-inline ${p.margen_venta_pct !== null && p.margen_venta_pct !== undefined && Number(p.margen_venta_pct) < 0 ? 'valor-critico' : ''}`}
-                        defaultValue={p.margen_venta_pct ?? ''}
-                        placeholder="—"
-                        onBlur={(e) => guardarCampo(p.id, 'margen_venta_pct', parseNumero(e.target.value))}
-                        style={{ width: 65 }}
-                        title={p.margen_venta_pct !== null && p.margen_venta_pct !== undefined && Number(p.margen_venta_pct) < 0 ? 'Margen negativo: se vende por debajo del costo' : undefined}
-                        title="Margen % propio de este producto (vacío = usa el general de Configuración)"
-                      />
-                    </td>
-                    <td>
-                      {p.costo_final == null ? <span className="muted">—</span> : Number(p.costo_final).toFixed(2)}
+                      {p.costo_final_ars == null ? <span className="muted">—</span> : formatoMoneda(p.costo_final_ars)}
                     </td>
                     <td>
                       {p.precio == null ? (
@@ -998,12 +1241,8 @@ export default function Productos() {
                       )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
-                      <button type="button" onClick={() => toggleDetalle(p)} className="btn-link">
-                        {detalleAbiertoId === p.id ? 'Cerrar' : 'Detalle'}
-                      </button>
-                      {' · '}
-                      <button type="button" onClick={() => abrirRestock(p)} className="btn-link">
-                        {restockAbiertoId === p.id ? 'Cerrar' : '+ Restock'}
+                      <button type="button" onClick={() => abrirEditar(p)} className="btn-link">
+                        {detalleAbiertoId === p.id ? 'Cerrar' : 'Editar'}
                       </button>
                       {' · '}
                       <button type="button" onClick={() => eliminarProducto(p.id)} disabled={eliminandoId === p.id} className="btn-link-danger">
@@ -1011,82 +1250,6 @@ export default function Productos() {
                       </button>
                     </td>
                   </tr>
-                  {(detalleAbiertoId === p.id || restockAbiertoId === p.id) && (
-                  <tr>
-                    <td colSpan={12} style={{ background: 'var(--bg-soft, #f8fafc)' }}>
-                      {detalleAbiertoId === p.id && (
-                        <div style={{ padding: '10px 6px' }}>
-                          {cargandoDetalle && <div className="loading">Cargando detalle...</div>}
-                          {errorDetalle && <div className="error-box">{errorDetalle}</div>}
-                          {detalleData && !cargandoDetalle && (
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24 }}>
-                              <div style={{ minWidth: 220 }}>
-                                <p style={{ margin: '0 0 6px', fontWeight: 600 }}>{p.descripcion}</p>
-                                <p style={{ margin: '2px 0' }}>Costo unitario: <strong>{detalleData.costo_unitario_usd != null ? formatoMoneda(detalleData.costo_unitario_usd, 'USD') : '—'}</strong> ({detalleData.costo_unitario_ars != null ? formatoMoneda(detalleData.costo_unitario_ars) : '—'})</p>
-                                <p style={{ margin: '2px 0' }}>Precio de venta: <strong>{detalleData.precio_ars != null ? formatoMoneda(detalleData.precio_ars) : '—'}</strong></p>
-                                <p style={{ margin: '2px 0' }}>Stock: <strong>{detalleData.stock}</strong></p>
-                                <p style={{ margin: '2px 0' }}>Cotización dólar hoy: <strong>{detalleData.cotizacion_dolar ? formatoMoneda(detalleData.cotizacion_dolar) : '—'}</strong></p>
-                                <p style={{ margin: '2px 0' }}>Cantidad vendida (histórico): <strong>{detalleData.cantidad_vendida}</strong></p>
-                              </div>
-
-                              <div style={{ minWidth: 240 }}>
-                                <p style={{ margin: '0 0 6px', fontWeight: 600 }}>Lotes (ganancia efectiva por lote)</p>
-                                {detalleData.lotes.length === 0 && <p className="muted" style={{ margin: 0 }}>Sin lotes registrados.</p>}
-                                <ul style={{ margin: 0, paddingLeft: 18 }}>
-                                  {detalleData.lotes.map((l) => (
-                                    <li key={l.id} style={{ marginBottom: 4 }}>
-                                      {l.cantidad} producto{Number(l.cantidad) === 1 ? '' : 's'} {formatoPct(l.margen_venta_pct)} ganancia — {formatoFecha(l.fecha)}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {restockAbiertoId === p.id && (
-                        <div style={{ padding: '10px 6px' }}>
-                          <p style={{ margin: '0 0 8px', fontWeight: 600 }}>+ Nuevo restock: {p.descripcion}</p>
-                          {errorRestock && <div className="error-box">{errorRestock}</div>}
-                          <div className="form-row" style={{ flexWrap: 'wrap', gap: 10 }}>
-                            <input
-                              type="text" inputMode="decimal"
-                              placeholder="Cantidad que entró"
-                              value={restockForm.cantidad}
-                              onChange={(e) => setRestockForm((f) => ({ ...f, cantidad: e.target.value }))}
-                              style={{ width: 140 }}
-                            />
-                            <input
-                              type="text" inputMode="decimal"
-                              placeholder={restockForm.costoMoneda === 'ARS' ? 'Costo en $' : 'Costo en USD'}
-                              value={restockForm.costo}
-                              onChange={(e) => setRestockForm((f) => ({ ...f, costo: e.target.value }))}
-                              style={{ width: 120 }}
-                            />
-                            <select
-                              value={restockForm.costoMoneda}
-                              onChange={(e) => setRestockForm((f) => ({ ...f, costoMoneda: e.target.value }))}
-                              style={{ width: 80 }}
-                            >
-                              <option value="USD">USD</option>
-                              <option value="ARS">ARS</option>
-                            </select>
-                            <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
-                            <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={restockForm.iva_pct} onChange={(e) => setRestockForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
-                            <input type="text" inputMode="decimal" placeholder="Margen % (opcional)" value={restockForm.margen_venta_pct} onChange={(e) => setRestockForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 140 }} />
-                            <button type="button" className="btn-primary" disabled={guardandoRestock} onClick={() => confirmarRestock(p)}>
-                              {guardandoRestock ? 'Guardando...' : 'Confirmar restock'}
-                            </button>
-                          </div>
-                          <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                            Si dejás Envío/IVA/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
-                          </p>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  )}
                   </Fragment>
                 ))}
               </tbody>
