@@ -190,23 +190,25 @@ export default function Gastos() {
 
   const totalFiltrado = gastos.reduce((acc, g) => acc + Number(g.monto || 0), 0);
 
-  // Acumulado por mes: la tabla viene ordenada por fecha DESC, id DESC (mas
-  // nuevo primero), pero el acumulado se calcula en orden cronologico
-  // ascendente dentro de cada mes -- despues se muestra en el mismo orden de
-  // la tabla. Cuando dos gastos comparten fecha, el empate se desempata por
-  // id ASC (orden real en que se cargaron), si no el sort quedaba "estable"
-  // sobre el orden ya invertido de la tabla y el acumulado sumaba al reves.
+  // Acumulado del período filtrado (no por mes calendario): la tabla viene
+  // ordenada por fecha DESC, id DESC (mas nuevo primero), pero el acumulado
+  // se calcula en orden cronologico ascendente sobre TODO lo que esta
+  // cargado en pantalla (ya filtrado por desde/hasta), sin reiniciar en
+  // cada 1ro de mes -- asi el acumulado coincide con lo que se ve filtrado,
+  // en vez de depender del mes calendario del filtro elegido. Cuando dos
+  // gastos comparten fecha, el empate se desempata por id ASC (orden real
+  // en que se cargaron), si no el sort quedaba "estable" sobre el orden ya
+  // invertido de la tabla y el acumulado sumaba al reves.
   const acumuladoPorId = useMemo(() => {
     const ascendente = [...gastos].sort((a, b) => {
       const porFecha = String(a.fecha).localeCompare(String(b.fecha));
       return porFecha !== 0 ? porFecha : Number(a.id) - Number(b.id);
     });
-    const acumuladoPorMes = {};
     const mapa = {};
+    let acumulado = 0;
     for (const g of ascendente) {
-      const mes = String(g.fecha).slice(0, 7);
-      acumuladoPorMes[mes] = (acumuladoPorMes[mes] || 0) + Number(g.monto || 0);
-      mapa[g.id] = acumuladoPorMes[mes];
+      acumulado += Number(g.monto || 0);
+      mapa[g.id] = acumulado;
     }
     return mapa;
   }, [gastos]);
@@ -287,7 +289,7 @@ export default function Gastos() {
           <>
             <table className="simple-table">
               <thead>
-                <tr><th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Monto</th><th>Acum. del mes</th><th /></tr>
+                <tr><th>Fecha</th><th>Descripción</th><th>Tipo</th><th>Monto</th><th>Acumulado</th><th /></tr>
               </thead>
               <tbody>
                 {gastos.length === 0 && <tr><td colSpan={6} className="muted">Sin gastos que coincidan</td></tr>}
