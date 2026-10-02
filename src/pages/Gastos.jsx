@@ -10,6 +10,19 @@ function hoyISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// Primer y ultimo dia del mes actual, para que el filtro de fecha arranque
+// mostrando "este mes" por defecto en vez de el historial completo (que es
+// lo que hacia que el total de abajo pareciera no coincidir con "lo del
+// mes": en realidad estaba sumando TODOS los gastos cargados alguna vez).
+function primerDiaMesActualISO() {
+  const hoy = new Date();
+  return new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10);
+}
+function ultimoDiaMesActualISO() {
+  const hoy = new Date();
+  return new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().slice(0, 10);
+}
+
 const PAGE_SIZE = 15;
 
 // Paginacion simple sobre lo ya cargado (igual que en Reportes/Empleado --
@@ -38,8 +51,8 @@ export default function Gastos() {
   const [gastos, setGastos] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [filtroTipo, setFiltroTipo] = useState('');
-  const [desde, setDesde] = useState('');
-  const [hasta, setHasta] = useState('');
+  const [desde, setDesde] = useState(primerDiaMesActualISO());
+  const [hasta, setHasta] = useState(ultimoDiaMesActualISO());
   const [loading, setLoading] = useState(true);
   const [eliminandoId, setEliminandoId] = useState(null);
 
@@ -58,7 +71,7 @@ export default function Gastos() {
     setLoading(false);
   }
 
-  useEffect(() => { cargar('', '', ''); }, []);
+  useEffect(() => { cargar('', desde, hasta); }, []);
 
   function aplicarFiltroTipo(tipo) {
     setFiltroTipo(tipo);
