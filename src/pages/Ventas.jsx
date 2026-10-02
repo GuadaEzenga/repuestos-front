@@ -29,7 +29,7 @@ export default function Ventas() {
   const [menuAbiertoId, setMenuAbiertoId] = useState(null);
 
   const [facturando, setFacturando] = useState(null); // id de la venta en curso
-  const [datosFactura, setDatosFactura] = useState({ tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+  const [datosFactura, setDatosFactura] = useState({ nombre: '', tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
   const [errorFactura, setErrorFactura] = useState(null);
   const [emitiendo, setEmitiendo] = useState(false);
 
@@ -131,7 +131,14 @@ export default function Ventas() {
   function abrirFacturar(venta) {
     setFacturando(venta.id);
     setErrorFactura(null);
-    setDatosFactura({ tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+    // Si la venta tiene un cliente vinculado, arrancamos con su nombre como
+    // base -- pero queda editable aca mismo, porque esto es justamente lo
+    // que se manda a AFIP y lo que va a aparecer impreso en el PDF, así que
+    // si el nombre del cliente está mal escrito o incompleto se puede
+    // corregir en el momento sin tener que ir a arreglar la ficha del
+    // cliente primero.
+    const nombreCliente = [venta.cliente_nombre, venta.cliente_apellido].filter(Boolean).join(' ');
+    setDatosFactura({ nombre: nombreCliente || '', tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
   }
 
   async function emitirFactura(id) {
@@ -286,6 +293,15 @@ export default function Ventas() {
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.
                             </p>
+                            <p className="muted" style={{ marginTop: 0, marginBottom: 10 }}>
+                              Estos datos son los que se mandan a AFIP y los que van a aparecer impresos en el PDF de la factura -- revisalos bien antes de confirmar.
+                            </p>
+                            <input
+                              placeholder="Nombre y apellido / Razón social"
+                              value={datosFactura.nombre}
+                              onChange={(e) => setDatosFactura((d) => ({ ...d, nombre: e.target.value }))}
+                              style={{ width: '100%', marginBottom: 8 }}
+                            />
                             <div className="form-row">
                               <select value={datosFactura.tipo_documento} onChange={(e) => setDatosFactura((d) => ({ ...d, tipo_documento: e.target.value }))}>
                                 {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
