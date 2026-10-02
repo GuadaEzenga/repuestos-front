@@ -47,6 +47,10 @@ async function request(path, { method = 'GET', body, params } = {}) {
     if (!res.ok) throw new Error('No se pudo generar el PDF');
     return res.blob();
   }
+  if (contentType.includes('spreadsheetml')) {
+    if (!res.ok) throw new Error('No se pudo generar el Excel');
+    return res.blob();
+  }
 
   const data = contentType.includes('application/json') ? await res.json() : null;
   if (!res.ok) {

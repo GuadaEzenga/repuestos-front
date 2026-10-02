@@ -215,6 +215,28 @@ export default function Productos() {
   const [importando, setImportando] = useState(false);
   const [progresoImportar, setProgresoImportar] = useState(null);
   const [resultadoImportar, setResultadoImportar] = useState(null);
+  const [exportando, setExportando] = useState(false);
+
+  // Excel para control de stock: TODOS los productos activos (no solo la
+  // pagina/busqueda actual), de la A a la Z, para imprimir y tildar en el
+  // local -- trae el archivo ya armado del backend (ver GET
+  // /productos/exportar) y lo descarga como si fuera un link normal.
+  async function exportarStock() {
+    setExportando(true);
+    try {
+      const blob = await api.get('/productos/exportar');
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `control-stock-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 5000 });
+    } finally {
+      setExportando(false);
+    }
+  }
 
   async function cargar(categoriaParam) {
     setLoading(true);
@@ -750,6 +772,9 @@ export default function Productos() {
           </button>
           <button type="button" className="btn-secondary" onClick={() => setMostrarImportar((m) => !m)}>
             {mostrarImportar ? 'Cancelar' : 'Importar Excel (CSV)'}
+          </button>
+          <button type="button" className="btn-secondary" onClick={exportarStock} disabled={exportando}>
+            {exportando ? 'Generando...' : 'Exportar Excel (control de stock)'}
           </button>
           <button type="button" className="btn-secondary" onClick={() => setMostrarMargenMasivo((m) => !m)}>
             {mostrarMargenMasivo ? 'Cancelar' : 'Actualizar margen (masivo)'}
