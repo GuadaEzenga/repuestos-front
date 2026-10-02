@@ -32,6 +32,7 @@ export default function NuevaVenta() {
   const [productos, setProductos] = useState([]);
   const [productosPorId, setProductosPorId] = useState({});
   const [grupos, setGrupos] = useState([]);
+  const [gruposPorId, setGruposPorId] = useState({});
   const [config, setConfig] = useState(null);
   const [clientesTodos, setClientesTodos] = useState([]);
   const [presupuestos, setPresupuestos] = useState([]);
@@ -87,7 +88,13 @@ export default function NuevaVenta() {
       for (const p of ordenados) mapa[p.id] = p;
       setProductosPorId(mapa);
     });
-    api.get('/grupos').then((data) => setGrupos([...data.grupos].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' }))));
+    api.get('/grupos').then((data) => {
+      const ordenados = [...data.grupos].sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '', 'es', { sensitivity: 'base' }));
+      setGrupos(ordenados);
+      const mapa = {};
+      for (const g of ordenados) mapa[g.id] = g;
+      setGruposPorId(mapa);
+    });
     api.get('/config').then((data) => setConfig(data));
     api.get('/clientes', { pageSize: 2000 }).then((data) => {
       const ordenados = [...data.clientes].sort((a, b) => `${a.nombre || ''} ${a.apellido || ''}`.localeCompare(`${b.nombre || ''} ${b.apellido || ''}`, 'es', { sensitivity: 'base' }));
@@ -171,8 +178,11 @@ export default function NuevaVenta() {
         return;
       }
 
-      const detalle = await api.get(`/grupos/${item.id}`);
-      const componentes = detalle.items.map((comp) => ({
+      // Los items de cada kit ya vinieron con el listado de /grupos (ver el
+      // useEffect de carga inicial), asi que elegir un kit no espera ningun
+      // pedido de red nuevo -- queda instantaneo.
+      const grupo = gruposPorId[item.id];
+      const componentes = (grupo?.items || []).map((comp) => ({
         producto_id: comp.producto_id,
         descripcion: comp.descripcion,
         cantidadPorGrupo: Number(comp.cantidad),
@@ -271,6 +281,16 @@ export default function NuevaVenta() {
   async function agregarUnItem(item) {
     setBusqueda('');
     await agregarAlCarrito(item);
+  }
+
+  // Click directo en un resultado (a diferencia de Enter, que se usa para
+  // cargar varios sin soltar el teclado): acá sí se cierra el listado
+  // después de agregar, que es lo que se espera al hacer click en algo.
+  async function agregarItemClick(item) {
+    await agregarAlCarrito(item);
+    setBusqueda('');
+    setBuscadorEnfocado(false);
+    buscadorRef.current?.blur();
   }
 
   // Enter en el buscador agrega el primer resultado sin soltar el teclado --
@@ -651,7 +671,7 @@ export default function NuevaVenta() {
                   {resultadosBusqueda.map((r) => {
                     const clave = `${r.kind}-${r.id}`;
                     return (
-                      <li key={clave} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => agregarUnItem(r)}>
+                      <li key={clave} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => agregarItemClick(r)}>
                         <input
                           type="checkbox"
                           checked={seleccionBusqueda.has(clave)}
