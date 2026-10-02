@@ -993,7 +993,6 @@ export default function Productos() {
                       <p style={{ margin: '0 0 6px', fontWeight: 600 }}>En USD (solo acá)</p>
                       <p style={{ margin: '2px 0' }}>Cotización dólar hoy: <strong>{detalleData.cotizacion_dolar ? formatoMoneda(detalleData.cotizacion_dolar) : '—'}</strong></p>
                       <p style={{ margin: '2px 0' }}>Costo unitario: <strong>{detalleData.costo_unitario_usd != null ? formatoMoneda(detalleData.costo_unitario_usd, 'USD') : '—'}</strong></p>
-                      <p style={{ margin: '2px 0' }}>Costo unitario total (todo el stock): <strong>{detalleData.costo_unitario_total_usd != null ? formatoMoneda(detalleData.costo_unitario_total_usd, 'USD') : '—'}</strong></p>
                     </div>
                   </div>
 
