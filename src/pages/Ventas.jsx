@@ -29,9 +29,14 @@ export default function Ventas() {
   const [menuAbiertoId, setMenuAbiertoId] = useState(null);
 
   const [facturando, setFacturando] = useState(null); // id de la venta en curso
-  const [datosFactura, setDatosFactura] = useState({ nombre: '', tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+  const [datosFactura, setDatosFactura] = useState({ nombre: '', tipo_documento: 'CUIT', documento: '', condicion_fiscal: 'Consumidor Final', direccion: '' });
   const [errorFactura, setErrorFactura] = useState(null);
   const [emitiendo, setEmitiendo] = useState(false);
+  // Autocompletar nombre/domicilio desde el padron de AFIP al cargar un
+  // CUIT/CUIL (igual que hace ARCA) -- Consumidor Final es la unica
+  // condicion que no necesita ni usa documento del cliente.
+  const [buscandoPadron, setBuscandoPadron] = useState(false);
+  const [errorPadron, setErrorPadron] = useState(null);
 
   // --- Editar una venta ya confirmada: cliente, forma de pago y notas
   // (los items/cantidades/stock no se tocan -- para eso están las
@@ -131,14 +136,35 @@ export default function Ventas() {
   function abrirFacturar(venta) {
     setFacturando(venta.id);
     setErrorFactura(null);
+    setErrorPadron(null);
     // Si la venta tiene un cliente vinculado, arrancamos con su nombre como
     // base -- pero queda editable aca mismo, porque esto es justamente lo
     // que se manda a AFIP y lo que va a aparecer impreso en el PDF, así que
     // si el nombre del cliente está mal escrito o incompleto se puede
     // corregir en el momento sin tener que ir a arreglar la ficha del
-    // cliente primero.
+    // cliente primero. Por defecto arranca en Consumidor Final (que no
+    // necesita nada mas); si el cliente real pide otra condición, ahí se
+    // carga el CUIT/CUIL y se autocompleta.
     const nombreCliente = [venta.cliente_nombre, venta.cliente_apellido].filter(Boolean).join(' ');
-    setDatosFactura({ nombre: nombreCliente || '', tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+    setDatosFactura({ nombre: nombreCliente || '', tipo_documento: 'CUIT', documento: '', condicion_fiscal: 'Consumidor Final', direccion: '' });
+  }
+
+  // Busca el nombre/razón social y domicilio real de un CUIT/CUIL en el
+  // padrón de AFIP (lo mismo que hace ARCA al facturar) y completa los
+  // campos -- quedan editables igual por si hace falta ajustar algo.
+  async function buscarEnPadron() {
+    const doc = datosFactura.documento.replace(/\D/g, '');
+    if (doc.length !== 11 || !['CUIT', 'CUIL'].includes(datosFactura.tipo_documento)) return;
+    setBuscandoPadron(true);
+    setErrorPadron(null);
+    try {
+      const datos = await api.get(`/clientes/padron/${doc}`);
+      setDatosFactura((d) => ({ ...d, nombre: datos.nombre || d.nombre, direccion: datos.domicilio || d.direccion }));
+    } catch (err) {
+      setErrorPadron(err.message);
+    } finally {
+      setBuscandoPadron(false);
+    }
   }
 
   async function emitirFactura(id) {
@@ -293,35 +319,74 @@ export default function Ventas() {
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.
                             </p>
-                            <p className="muted" style={{ marginTop: 0, marginBottom: 10 }}>
-                              Estos datos son los que se mandan a AFIP y los que van a aparecer impresos en el PDF de la factura -- revisalos bien antes de confirmar.
-                            </p>
-                            <input
-                              placeholder="Nombre y apellido / Razón social"
-                              value={datosFactura.nombre}
-                              onChange={(e) => setDatosFactura((d) => ({ ...d, nombre: e.target.value }))}
-                              style={{ width: '100%', marginBottom: 8 }}
-                            />
-                            <div className="form-row">
-                              <select value={datosFactura.tipo_documento} onChange={(e) => setDatosFactura((d) => ({ ...d, tipo_documento: e.target.value }))}>
-                                {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
-                              </select>
-                              <input
-                                placeholder="Número de documento"
-                                value={datosFactura.documento}
-                                onChange={(e) => setDatosFactura((d) => ({ ...d, documento: e.target.value }))}
-                              />
-                            </div>
                             <select
                               value={datosFactura.condicion_fiscal}
-                              onChange={(e) => setDatosFactura((d) => ({ ...d, condicion_fiscal: e.target.value }))}
-                              style={{ marginTop: 8, width: '100%' }}
+                              onChange={(e) => {
+                                const condicion_fiscal = e.target.value;
+                                setErrorPadron(null);
+                                setDatosFactura((d) =>
+                                  condicion_fiscal === 'Consumidor Final'
+                                    ? { ...d, condicion_fiscal, nombre: '', tipo_documento: 'CUIT', documento: '', direccion: '' }
+                                    : { ...d, condicion_fiscal }
+                                );
+                              }}
+                              style={{ width: '100%' }}
                             >
                               {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
                             </select>
+
+                            {datosFactura.condicion_fiscal === 'Consumidor Final' ? (
+                              <p className="muted" style={{ marginBottom: 0 }}>
+                                Consumidor Final no necesita ningún dato del cliente -- se factura así, sin nombre ni documento.
+                              </p>
+                            ) : (
+                              <>
+                                <p className="muted" style={{ marginBottom: 10 }}>
+                                  Esta condición necesita el CUIT o CUIL del cliente. Cargalo y se autocompleta el nombre y domicilio desde AFIP (podés corregirlos si hace falta).
+                                </p>
+                                <div className="form-row">
+                                  <select
+                                    value={datosFactura.tipo_documento}
+                                    onChange={(e) => setDatosFactura((d) => ({ ...d, tipo_documento: e.target.value }))}
+                                  >
+                                    {['CUIT', 'CUIL'].map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <input
+                                    placeholder="Número de CUIT/CUIL"
+                                    value={datosFactura.documento}
+                                    onChange={(e) => setDatosFactura((d) => ({ ...d, documento: e.target.value }))}
+                                    onBlur={buscarEnPadron}
+                                  />
+                                  <button type="button" onClick={buscarEnPadron} disabled={buscandoPadron} className="btn-secondary">
+                                    {buscandoPadron ? 'Buscando...' : 'Buscar en AFIP'}
+                                  </button>
+                                </div>
+                                {errorPadron && <p className="login-error" style={{ marginTop: 4 }}>{errorPadron}</p>}
+                                <input
+                                  placeholder="Nombre y apellido / Razón social"
+                                  value={datosFactura.nombre}
+                                  onChange={(e) => setDatosFactura((d) => ({ ...d, nombre: e.target.value }))}
+                                  style={{ width: '100%', marginTop: 8 }}
+                                />
+                                <input
+                                  placeholder="Domicilio"
+                                  value={datosFactura.direccion}
+                                  onChange={(e) => setDatosFactura((d) => ({ ...d, direccion: e.target.value }))}
+                                  style={{ width: '100%', marginTop: 8 }}
+                                />
+                              </>
+                            )}
                             {errorFactura && <p className="login-error">{errorFactura}</p>}
                             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                              <button type="button" onClick={() => emitirFactura(v.id)} disabled={emitiendo} className="btn-danger">
+                              <button
+                                type="button"
+                                onClick={() => emitirFactura(v.id)}
+                                disabled={
+                                  emitiendo ||
+                                  (datosFactura.condicion_fiscal !== 'Consumidor Final' && datosFactura.documento.replace(/\D/g, '').length !== 11)
+                                }
+                                className="btn-danger"
+                              >
                                 {emitiendo ? 'Emitiendo...' : 'Confirmar y emitir factura real'}
                               </button>
                               <button type="button" onClick={() => setFacturando(null)} className="btn-secondary">Cancelar</button>
