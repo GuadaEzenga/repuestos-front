@@ -190,11 +190,17 @@ export default function Gastos() {
 
   const totalFiltrado = gastos.reduce((acc, g) => acc + Number(g.monto || 0), 0);
 
-  // Acumulado por mes: la tabla viene ordenada por fecha DESC (mas nuevo
-  // primero), pero el acumulado se calcula en orden cronologico ascendente
-  // dentro de cada mes -- despues se muestra en el mismo orden de la tabla.
+  // Acumulado por mes: la tabla viene ordenada por fecha DESC, id DESC (mas
+  // nuevo primero), pero el acumulado se calcula en orden cronologico
+  // ascendente dentro de cada mes -- despues se muestra en el mismo orden de
+  // la tabla. Cuando dos gastos comparten fecha, el empate se desempata por
+  // id ASC (orden real en que se cargaron), si no el sort quedaba "estable"
+  // sobre el orden ya invertido de la tabla y el acumulado sumaba al reves.
   const acumuladoPorId = useMemo(() => {
-    const ascendente = [...gastos].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)));
+    const ascendente = [...gastos].sort((a, b) => {
+      const porFecha = String(a.fecha).localeCompare(String(b.fecha));
+      return porFecha !== 0 ? porFecha : Number(a.id) - Number(b.id);
+    });
     const acumuladoPorMes = {};
     const mapa = {};
     for (const g of ascendente) {

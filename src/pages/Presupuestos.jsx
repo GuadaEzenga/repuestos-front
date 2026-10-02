@@ -392,6 +392,19 @@ export default function Presupuestos() {
 
   const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
+  // Mismo calculo que Nueva Venta: antes esta pantalla solo avisaba "hay
+  // descuento" al lado de la forma de pago pero el Subtotal mostrado no
+  // bajaba -- el presupuesto se guardaba bien (el backend calcula el total
+  // real), pero lo que se veia en pantalla antes de guardar no reflejaba el
+  // descuento.
+  function redondear(valor, unidad) {
+    return Math.round(valor / unidad) * unidad;
+  }
+  const unidadRedondeo = Number(config?.redondeo_unidad || 10);
+  const ajustePct = Number(tablaVigente[metodoPago] || 0);
+  const montoAjuste = subtotalEstimado * (ajustePct / 100);
+  const totalEstimado = redondear(subtotalEstimado + montoAjuste, unidadRedondeo);
+
   function buscarClientes(texto) {
     setBusquedaCliente(texto);
   }
@@ -532,7 +545,6 @@ export default function Presupuestos() {
   }
 
   const totalPaginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const ajustePct = Number(tablaVigente[metodoPago] || 0);
 
   // --- Pantalla de resultado despues de guardar un presupuesto ---
   if (presupuestoCreado) {
@@ -709,8 +721,16 @@ export default function Presupuestos() {
 
             {carrito.length > 0 && (
               <div className="resumen-totales">
-                <div className="resumen-linea total"><span>Subtotal estimado</span><span>{formatoMoneda(subtotalEstimado)}</span></div>
-                <p className="muted" style={{ fontSize: 12 }}>El total final se recalcula con el ajuste por forma de pago (según cliente técnico/público) al guardar.</p>
+                <div className="resumen-linea"><span>Subtotal</span><span>{formatoMoneda(subtotalEstimado)}</span></div>
+                {ajustePct !== 0 && (
+                  <div className={`resumen-linea ${ajustePct < 0 ? 'descuento' : ''}`}>
+                    <span>
+                      {esTecnico ? 'Cliente técnico' : 'Público'} · {metodoPago.replace(/_/g, ' ')} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
+                    </span>
+                    <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
+                  </div>
+                )}
+                <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
               </div>
             )}
           </div>
@@ -750,11 +770,6 @@ export default function Presupuestos() {
               <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} style={{ width: '100%' }}>
                 {metodosPago.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
               </select>
-              {ajustePct !== 0 && (
-                <p className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-                  Ajuste {esTecnico ? 'cliente técnico' : 'público'}: {ajustePct > 0 ? '+' : ''}{ajustePct}%
-                </p>
-              )}
               <textarea placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} style={{ width: '100%', marginTop: 10, minHeight: 60 }} />
               {errorForm && <p className="login-error">{errorForm}</p>}
               <button

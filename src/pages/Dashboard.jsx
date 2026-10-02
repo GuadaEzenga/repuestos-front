@@ -205,15 +205,14 @@ export default function Dashboard() {
                   <span>Ingresos</span>
                   <span>{formatoMoneda(data.ingresos)}</span>
                 </div>
-                {data.dona_gastos_por_tipo.length === 0 && (
-                  <div className="tooltip-fila muted"><span>Sin gastos en el período</span></div>
-                )}
-                {data.dona_gastos_por_tipo.map((g) => (
-                  <div className="tooltip-fila" key={g.tipo}>
-                    <span>− {g.tipo}</span>
-                    <span>{formatoMoneda(g.total)}</span>
-                  </div>
-                ))}
+                <div className="tooltip-fila">
+                  <span>− Gastos</span>
+                  <span>
+                    {formatoMoneda(
+                      data.dona_gastos_por_tipo.reduce((acc, g) => acc + Number(g.total || 0), 0)
+                    )}
+                  </span>
+                </div>
                 <div className="tooltip-separador" />
                 <div className="tooltip-fila tooltip-total">
                   <span>Neto</span>
