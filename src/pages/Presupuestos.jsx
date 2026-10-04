@@ -3,8 +3,8 @@ import api from '../api/client';
 import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
+import { ESTADO_CLIENTE_FACTURA, useFacturacionCliente } from '../hooks/useFacturacionCliente';
 
-const TIPOS_DOC = ['DNI', 'CUIT', 'CUIL'];
 const CONDICIONES_FISCALES = ['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
 const METODOS_DEFAULT = ['efectivo', 'transferencia', 'tarjeta_debito', 'tarjeta_credito'];
 const PAGE_SIZE = 30;
@@ -95,9 +95,12 @@ export default function Presupuestos() {
   const [eliminandoId, setEliminandoId] = useState(null);
 
   const [facturando, setFacturando] = useState(null);
-  const [datosFactura, setDatosFactura] = useState({ tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
   const [errorFactura, setErrorFactura] = useState(null);
   const [emitiendo, setEmitiendo] = useState(false);
+  // Maquina de estados del formulario de facturar (busqueda en el padron
+  // de AFIP, bloqueo de campos, validacion) -- ver hooks/useFacturacionCliente,
+  // mismo hook que usa Ventas.jsx.
+  const cliente = useFacturacionCliente();
 
   async function cargarHistorial(paginaParam) {
     setLoading(true);
@@ -526,14 +529,18 @@ export default function Presupuestos() {
   function abrirFacturar(p) {
     setFacturando(p.id);
     setErrorFactura(null);
-    setDatosFactura({ tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+    // Si el presupuesto tiene un cliente vinculado, arranca con su nombre
+    // como base (igual que en Ventas.jsx) -- queda editable aca mismo
+    // mientras no haya match de AFIP.
+    const nombreCliente = [p.cliente_nombre, p.cliente_apellido].filter(Boolean).join(' ');
+    cliente.reset({ nombre: nombreCliente || '' });
   }
 
   async function emitirFactura(id) {
     setEmitiendo(true);
     setErrorFactura(null);
     try {
-      const actualizado = await api.post(`/presupuestos/${id}/facturar`, { ...datosFactura, confirmar: true });
+      const actualizado = await api.post(`/presupuestos/${id}/facturar`, { ...cliente.campos, confirmar: true });
       setPresupuestos((prev) => prev.map((p) => (p.id === id ? { ...p, ...actualizado } : p)));
       setFacturando(null);
       toast('Factura emitida ✓');
@@ -851,18 +858,80 @@ export default function Presupuestos() {
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.
                             </p>
-                            <div className="form-row">
-                              <select value={datosFactura.tipo_documento} onChange={(e) => setDatosFactura((d) => ({ ...d, tipo_documento: e.target.value }))}>
-                                {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
-                              </select>
-                              <input placeholder="Número de documento" value={datosFactura.documento} onChange={(e) => setDatosFactura((d) => ({ ...d, documento: e.target.value }))} />
-                            </div>
-                            <select value={datosFactura.condicion_fiscal} onChange={(e) => setDatosFactura((d) => ({ ...d, condicion_fiscal: e.target.value }))} style={{ marginTop: 8, width: '100%' }}>
+                            <select
+                              value={cliente.campos.condicion_fiscal}
+                              disabled={cliente.condicionFiscalBloqueada}
+                              onChange={(e) => cliente.setCondicionFiscal(e.target.value)}
+                              style={{ width: '100%' }}
+                            >
                               {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
                             </select>
+                            {cliente.condicionFiscalBloqueada && (
+                              <p className="muted" style={{ fontSize: 12, marginTop: 2 }}>Condición fiscal confirmada por AFIP.</p>
+                            )}
+
+                            {cliente.campos.condicion_fiscal === 'Consumidor Final' ? (
+                              <p className="muted" style={{ marginBottom: 0 }}>
+                                Consumidor Final no necesita ningún dato del cliente -- se factura así, sin nombre ni documento.
+                              </p>
+                            ) : (
+                              <>
+                                <p className="muted" style={{ marginBottom: 10 }}>
+                                  Esta condición necesita el CUIT o CUIL del cliente. Cargalo y se autocompleta el nombre y domicilio desde AFIP (podés corregirlos si no hubo match).
+                                </p>
+                                <div className="form-row">
+                                  <select
+                                    value={cliente.campos.tipo_documento}
+                                    onChange={(e) => cliente.setTipoDocumento(e.target.value)}
+                                  >
+                                    {['CUIT', 'CUIL'].map((t) => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  <input
+                                    placeholder="Número de CUIT/CUIL"
+                                    value={cliente.campos.documento}
+                                    onChange={(e) => cliente.setDocumento(e.target.value)}
+                                  />
+                                  {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
+                                    <button type="button" onClick={() => cliente.buscarEnPadron()} className="btn-secondary">
+                                      Reintentar
+                                    </button>
+                                  )}
+                                </div>
+                                {cliente.estado === ESTADO_CLIENTE_FACTURA.SEARCHING && (
+                                  <p className="muted" style={{ marginTop: 4 }}>Buscando en el padrón de AFIP...</p>
+                                )}
+                                {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
+                                  <p className="login-error" style={{ marginTop: 4 }}>
+                                    {cliente.errorPadron || 'AFIP no tiene datos para ese documento.'} Completá los datos a mano para poder facturar.
+                                  </p>
+                                )}
+                                <input
+                                  placeholder="Nombre y apellido / Razón social"
+                                  value={cliente.campos.nombre}
+                                  disabled={cliente.nombreBloqueado}
+                                  onChange={(e) => cliente.setNombreManual(e.target.value)}
+                                  style={{ width: '100%', marginTop: 8 }}
+                                />
+                                <input
+                                  placeholder="Domicilio"
+                                  value={cliente.campos.direccion}
+                                  disabled={cliente.domicilioBloqueado}
+                                  onChange={(e) => cliente.setDireccionManual(e.target.value)}
+                                  style={{ width: '100%', marginTop: 8 }}
+                                />
+                                {cliente.errorValidacion && (
+                                  <p className="login-error" style={{ marginTop: 4 }}>{cliente.errorValidacion}</p>
+                                )}
+                              </>
+                            )}
                             {errorFactura && <p className="login-error">{errorFactura}</p>}
                             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                              <button type="button" onClick={() => emitirFactura(p.id)} disabled={emitiendo} className="btn-danger">
+                              <button
+                                type="button"
+                                onClick={() => emitirFactura(p.id)}
+                                disabled={emitiendo || !cliente.puedeEmitir}
+                                className="btn-danger"
+                              >
                                 {emitiendo ? 'Emitiendo...' : 'Confirmar y emitir factura real'}
                               </button>
                               <button type="button" onClick={() => setFacturando(null)} className="btn-secondary">Cancelar</button>
