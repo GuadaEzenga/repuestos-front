@@ -87,10 +87,17 @@ export function useFacturacionCliente() {
   // CUIT/CUIL completo) -- como en ARCA, no hace falta que el usuario
   // aprete ningun boton. El pequeno delay evita pegarle a AFIP en cada
   // tecla si el usuario sigue editando (pegar y corregir un numero).
+  //
+  // IMPORTANTE: solo se auto-dispara desde IDLE. Si fuera "distinto de FOUND
+  // y SEARCHING" (como estaba antes), un NOT_FOUND_OR_ERROR hace que este
+  // efecto se re-ejecute (porque "estado" cambio) y, como el documento sigue
+  // teniendo 11 digitos, vuelve a buscar -- bucle infinito pegandole a AFIP
+  // sin parar cada vez que el padron devuelve error. Que NOT_FOUND_OR_ERROR
+  // no reintente solo es intencional: para eso esta el boton "Reintentar".
   useEffect(() => {
     const doc = campos.documento.replace(/\D/g, '');
     if (doc.length !== 11 || !['CUIT', 'CUIL'].includes(campos.tipo_documento)) return;
-    if (estado === ESTADO_CLIENTE_FACTURA.FOUND || estado === ESTADO_CLIENTE_FACTURA.SEARCHING) return;
+    if (estado !== ESTADO_CLIENTE_FACTURA.IDLE) return;
     const id = setTimeout(() => buscarEnPadron(doc), 300);
     return () => clearTimeout(id);
   }, [campos.documento, campos.tipo_documento, estado, buscarEnPadron]);
@@ -99,15 +106,11 @@ export function useFacturacionCliente() {
     idBusquedaRef.current += 1; // cualquier busqueda en vuelo queda invalidada
     setErrorPadron(null);
     setCampos((c) => ({ ...c, documento }));
-    const limpio = documento.replace(/\D/g, '');
-    setEstado((prev) => {
-      if (limpio.length === 0) return ESTADO_CLIENTE_FACTURA.IDLE;
-      // Si ya habia un resultado (FOUND) y el documento vuelve a cambiar,
-      // se invalida ese resultado -- el useEffect de arriba va a disparar
-      // una busqueda nueva en cuanto vuelva a completar 11 digitos.
-      if (prev === ESTADO_CLIENTE_FACTURA.FOUND) return ESTADO_CLIENTE_FACTURA.IDLE;
-      return prev;
-    });
+    // Cualquier edicion del documento vuelve a IDLE -- invalida un resultado
+    // (FOUND) o un error (NOT_FOUND_OR_ERROR) anterior, y el efecto de
+    // arriba dispara una busqueda nueva en cuanto vuelva a completar 11
+    // digitos.
+    setEstado(ESTADO_CLIENTE_FACTURA.IDLE);
   }
 
   function setTipoDocumento(tipo_documento) {
