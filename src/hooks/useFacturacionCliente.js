@@ -12,9 +12,11 @@ import api from '../api/client';
 //   SEARCHING          -> hay un CUIT/CUIL de 11 digitos y se esta consultando el padron de AFIP.
 //   FOUND              -> el padron respondio con datos. razonSocial/domicilio quedan bloqueados
 //                         (read-only) porque son el dato oficial de AFIP, igual que en ARCA. La
-//                         condicionFiscal se bloquea SOLO si el backend pudo inferirla con certeza
-//                         (ver inferirCondicionFiscal en utils/afip.js) -- si vino null, queda
-//                         editable con un aviso, porque ahi la "adivinanza" es nuestra, no de AFIP.
+//                         condicionFiscal NO se toca: la elige la vendedora a mano ANTES de cargar
+//                         el documento (es la unica forma de que aparezca el campo CUIT/CUIL), y el
+//                         padron no devuelve un campo "condicion fiscal" real -- lo que
+//                         inferirCondicionFiscal() calcula en el backend es una adivinanza sin
+//                         validar contra AFIP, asi que nunca pisa ni bloquea la eleccion manual.
 //   NOT_FOUND_OR_ERROR -> el padron no devolvio nada o AFIP no respondio: todo se desbloquea para
 //                         carga manual, con una advertencia visual.
 export const ESTADO_CLIENTE_FACTURA = {
@@ -25,8 +27,11 @@ export const ESTADO_CLIENTE_FACTURA = {
 };
 
 // Condiciones fiscales que, como en ARCA, exigen SI O SI un CUIT/CUIL
-// valido y una razon social cargada -- "Consumidor Final" es la unica que
-// se puede facturar sin ningun dato del cliente.
+// valido -- "Consumidor Final" es la unica que se puede facturar sin
+// ningun dato del cliente. La razon social NO es requisito de AFIP para
+// autorizar el CAE (fecaeSolicitar solo manda DocTipo/DocNro); se sigue
+// autocompletando sola desde el padron para que el PDF salga bien, pero
+// si el padron no responde no bloquea la emision.
 const CONDICIONES_QUE_REQUIEREN_DOCUMENTO = ['Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
 
 const CAMPOS_VACIOS = { nombre: '', tipo_documento: 'CUIT', documento: '', condicion_fiscal: 'Consumidor Final', direccion: '' };
@@ -35,10 +40,6 @@ export function useFacturacionCliente() {
   const [estado, setEstado] = useState(ESTADO_CLIENTE_FACTURA.IDLE);
   const [campos, setCampos] = useState(CAMPOS_VACIOS);
   const [errorPadron, setErrorPadron] = useState(null);
-  // true si el ultimo FOUND vino con una condicionFiscal que el backend
-  // pudo inferir (no null) -- determina si ese campo en particular queda
-  // bloqueado o no (ver comentario de arriba).
-  const [condicionFiscalConfirmada, setCondicionFiscalConfirmada] = useState(false);
 
   // Evita aplicar la respuesta de una busqueda vieja si el documento volvio
   // a cambiar mientras la peticion estaba en vuelo (el usuario borro y
@@ -49,7 +50,6 @@ export function useFacturacionCliente() {
     idBusquedaRef.current += 1;
     setEstado(ESTADO_CLIENTE_FACTURA.IDLE);
     setErrorPadron(null);
-    setCondicionFiscalConfirmada(false);
     setCampos({ ...CAMPOS_VACIOS, ...siguiente });
   }, []);
 
@@ -66,15 +66,12 @@ export function useFacturacionCliente() {
       setCampos((c) => ({
         ...c,
         nombre: datos.razonSocial || c.nombre,
-        condicion_fiscal: datos.condicionFiscal || c.condicion_fiscal,
         direccion: datos.domicilio || c.direccion,
       }));
-      setCondicionFiscalConfirmada(Boolean(datos.condicionFiscal));
       setEstado(ESTADO_CLIENTE_FACTURA.FOUND);
     } catch (err) {
       if (idBusqueda !== idBusquedaRef.current) return;
       setErrorPadron(err.message);
-      setCondicionFiscalConfirmada(false);
       setEstado(ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR);
     }
     // campos.documento/tipo_documento se leen directo del estado actual
@@ -118,15 +115,14 @@ export function useFacturacionCliente() {
   }
 
   // Al elegir "Consumidor Final" se limpia todo (no hace falta, ni se usa,
-  // ningun dato del cliente). Cualquier otra condicion elegida A MANO
-  // (antes de que responda el padron) queda editable hasta que se busque
-  // o se cargue un documento.
+  // ningun dato del cliente). Cualquier otra condicion queda siempre editable
+  // -- es una decision de la vendedora, el padron no la pisa (ver comentario
+  // arriba de ESTADO_CLIENTE_FACTURA).
   function setCondicionFiscal(condicion_fiscal) {
     if (condicion_fiscal === 'Consumidor Final') {
       reset({ condicion_fiscal });
       return;
     }
-    setCondicionFiscalConfirmada(false);
     setCampos((c) => ({ ...c, condicion_fiscal }));
   }
 
@@ -140,11 +136,11 @@ export function useFacturacionCliente() {
 
   const requiereDocumento = CONDICIONES_QUE_REQUIEREN_DOCUMENTO.includes(campos.condicion_fiscal);
 
-  // Bloqueo de campos, UNO POR UNO -- no todo junto, por la salvedad de
-  // condicionFiscal explicada arriba.
+  // Bloqueo de campos: solo nombre/domicilio, que son el dato oficial de
+  // AFIP una vez que el padron respondio. condicionFiscal nunca se bloquea
+  // (la elige la vendedora, ver comentario arriba).
   const nombreBloqueado = estado === ESTADO_CLIENTE_FACTURA.FOUND;
   const domicilioBloqueado = estado === ESTADO_CLIENTE_FACTURA.FOUND && Boolean(campos.direccion);
-  const condicionFiscalBloqueada = estado === ESTADO_CLIENTE_FACTURA.FOUND && condicionFiscalConfirmada;
 
   // Matriz de validacion: que hace falta para habilitar "Emitir factura".
   let errorValidacion = null;
@@ -152,8 +148,8 @@ export function useFacturacionCliente() {
     const docLimpio = campos.documento.replace(/\D/g, '');
     if (estado === ESTADO_CLIENTE_FACTURA.SEARCHING) {
       errorValidacion = 'Esperando la respuesta de AFIP...';
-    } else if (docLimpio.length !== 11 || !campos.nombre.trim()) {
-      errorValidacion = 'Para esta condición fiscal, el CUIT y la Razón Social son obligatorios.';
+    } else if (docLimpio.length !== 11) {
+      errorValidacion = 'Para esta condición fiscal hace falta un CUIT o CUIL válido (11 dígitos).';
     }
   }
 
@@ -166,8 +162,6 @@ export function useFacturacionCliente() {
     requiereDocumento,
     nombreBloqueado,
     domicilioBloqueado,
-    condicionFiscalBloqueada,
-    condicionFiscalConfirmada,
     buscarEnPadron,
     setDocumento,
     setTipoDocumento,

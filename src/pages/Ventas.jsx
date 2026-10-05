@@ -300,15 +300,11 @@ export default function Ventas() {
                             </p>
                             <select
                               value={cliente.campos.condicion_fiscal}
-                              disabled={cliente.condicionFiscalBloqueada}
                               onChange={(e) => cliente.setCondicionFiscal(e.target.value)}
                               style={{ width: '100%' }}
                             >
                               {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
                             </select>
-                            {cliente.condicionFiscalBloqueada && (
-                              <p className="muted" style={{ fontSize: 12, marginTop: 2 }}>Condición fiscal confirmada por AFIP.</p>
-                            )}
 
                             {cliente.campos.condicion_fiscal === 'Consumidor Final' ? (
                               <p className="muted" style={{ marginBottom: 0 }}>
