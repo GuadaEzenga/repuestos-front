@@ -4,7 +4,8 @@ import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
-import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, detalleRecargo } from '../utils/pagos';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
+import RecargoLinea from '../components/RecargoLinea';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
@@ -772,13 +773,8 @@ export default function NuevaVenta() {
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
                 )}
-                {(comisionPct > 0 || impuestoPct > 0) && (
-                  <div className="resumen-linea">
-                    <span>
-                      Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} ({detalleRecargo(calculo)})
-                    </span>
-                    <span>+{formatoMoneda(recargoComision)}</span>
-                  </div>
+                {(comisionPct > 0 || impuestoPct > 0) && recargoComision > 0 && (
+                  <RecargoLinea metodo={metodoPago} cuotas={esMetodoCredito(metodoPago) ? cuotas : 1} calculo={calculo} formatoMoneda={formatoMoneda} />
                 )}
                 <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
                 <div style={{ marginTop: 10 }}>

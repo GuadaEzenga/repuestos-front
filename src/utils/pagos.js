@@ -16,6 +16,7 @@ export const METODOS_PAGO = [
   { clave: 'tarjeta_credito', label: 'Point - Crédito', grupo: 'Point', credito: true },
   { clave: 'tarjeta_prepaga', label: 'Point - Prepaga', grupo: 'Point' },
   { clave: 'qr_dinero_mp', label: 'QR - Dinero en Mercado Pago', grupo: 'QR' },
+  { clave: 'qr_otra_billetera', label: 'QR - Otra billetera o banco', grupo: 'QR' },
   { clave: 'qr_debito', label: 'QR - Débito', grupo: 'QR' },
   { clave: 'qr_credito', label: 'QR - Crédito', grupo: 'QR', credito: true },
   { clave: 'qr_prepaga', label: 'QR - Prepaga', grupo: 'QR' },
@@ -27,6 +28,7 @@ export const DEFAULT_COMISIONES = {
   tarjeta_credito: 4.4,
   tarjeta_prepaga: 3.68,
   qr_dinero_mp: 0.8,
+  qr_otra_billetera: 0,
   qr_debito: 0.89,
   qr_credito: 4.4,
   qr_prepaga: 3.93,
@@ -129,12 +131,23 @@ export function calcularTotalVenta({ subtotal, metodo, esTecnico, config, cuotas
   };
 }
 
-// Texto corto del recargo para el resumen de la venta, ej.
-// "MP 4,4% + IVA + imp. créditos 0,6% = 5,92%".
-export function detalleRecargo({ comisionPct, impuestoPct, comisionConIvaPct }) {
-  const fmt = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
-  const partes = [];
-  if (comisionPct > 0) partes.push(`MP ${fmt(comisionPct)}% + IVA`);
-  if (impuestoPct > 0) partes.push(`imp. créditos ${fmt(impuestoPct)}%`);
-  return partes.length > 1 || comisionPct > 0 ? `${partes.join(' + ')} = ${fmt(comisionConIvaPct)}%` : partes.join('');
+// Desglose del recargo para el "Ver detalle" del resumen de la venta: que
+// porcentaje se va en cada cosa (sobre lo que paga el cliente).
+export function detalleRecargoItems({ comisionPct = 0, costoCuotasPct = 0, impuestoPct = 0 }, cuotas = 1) {
+  const items = [];
+  const base = comisionPct - costoCuotasPct;
+  if (base > 0) {
+    items.push({ label: 'Comisión de Mercado Pago', pct: base });
+    items.push({ label: 'IVA sobre la comisión (21%)', pct: base * (IVA_COMISION - 1) });
+  }
+  if (costoCuotasPct > 0) {
+    items.push({ label: `Costo de ${cuotas} cuotas sin interés`, pct: costoCuotasPct });
+    items.push({ label: 'IVA sobre el costo de cuotas (21%)', pct: costoCuotasPct * (IVA_COMISION - 1) });
+  }
+  if (impuestoPct > 0) items.push({ label: 'Impuesto a los créditos y débitos', pct: impuestoPct });
+  return items;
+}
+
+export function formatoPct(n) {
+  return `${(Math.round(n * 100) / 100).toLocaleString('es-AR', { maximumFractionDigits: 2 })}%`;
 }
