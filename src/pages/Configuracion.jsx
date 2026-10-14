@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useUi } from '../context/UiContext';
+import { CUOTAS_POSIBLES, METODOS_PAGO, IVA_COMISION, cuotasMaxDesdeConfig, tablasDesdeConfig } from '../utils/pagos';
 
 // Claves conocidas, con su etiqueta y en que grupo van. El resto de las
 // claves que existan en config (o que se agreguen) aparecen abajo, en
@@ -20,6 +21,16 @@ const GRUPOS = [
     titulo: 'Datos que van en la Factura (según figura en AFIP para tu CUIT)',
     campos: [
       { clave: 'razon_social_facturacion', label: 'Razón Social (si no se carga, usa el nombre comercial)' },
+      {
+        clave: 'condicion_fiscal_negocio',
+        label: 'Condición frente al IVA del emisor (Responsable Inscripto = Factura A/B; Monotributo = Factura C)',
+        opciones: ['Responsable Monotributo', 'Responsable Inscripto'],
+      },
+      {
+        clave: 'factura_a_habilitada',
+        label: 'Factura A habilitada en ARCA (si es "No", las ventas a Responsables Inscriptos y Monotributistas quedan pendientes de facturar)',
+        opciones: ['No', 'Sí'],
+      },
       { clave: 'domicilio_facturacion', label: 'Domicilio Comercial (si no se carga, usa la dirección del local)' },
       { clave: 'ingresos_brutos', label: 'Ingresos Brutos' },
       { clave: 'fecha_inicio_actividades', label: 'Fecha de Inicio de Actividades' },
@@ -51,7 +62,11 @@ const CLAVES_CONOCIDAS = new Set(
   GRUPOS.flatMap((g) => g.campos.map((c) => c.clave)).concat([
     'ajustes_metodo_pago',
     'ajustes_metodo_pago_tecnico',
+    'comisiones_metodo_pago',
+    'costos_cuotas_sin_interes',
+    'cuotas_sin_interes_max',
     'cotizacion_dolar_actualizada_en',
+    'migracion_clientes_facturacion_v1',
   ])
 );
 
@@ -59,8 +74,11 @@ export default function Configuracion() {
   const { toast } = useUi();
   const [config, setConfig] = useState(null);
   const [valores, setValores] = useState({});
-  const [ajustesMetodoPago, setAjustesMetodoPago] = useState('{}');
-  const [ajustesMetodoPagoTecnico, setAjustesMetodoPagoTecnico] = useState('{}');
+  // Tabla de formas de pago: { [metodo]: { publico, tecnico, comision } } como texto editable.
+  const [tablaPagos, setTablaPagos] = useState({});
+  // Costo de cuotas sin interes: { [cuotas]: texto } y maximo ofrecido.
+  const [tablaCuotas, setTablaCuotas] = useState({});
+  const [cuotasMax, setCuotasMax] = useState(3);
   const [loading, setLoading] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
@@ -85,8 +103,9 @@ export default function Configuracion() {
       const data = await api.get('/config');
       setConfig(data);
       setValores(data);
-      setAjustesMetodoPago(data.ajustes_metodo_pago || '{}');
-      setAjustesMetodoPagoTecnico(data.ajustes_metodo_pago_tecnico || '{"efectivo": -10, "transferencia": -5}');
+      setTablaPagos(armarTablaPagos(data));
+      setTablaCuotas(armarTablaCuotas(data));
+      setCuotasMax(cuotasMaxDesdeConfig(data));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -95,6 +114,61 @@ export default function Configuracion() {
   }
 
   useEffect(() => { cargar(); }, []);
+
+  function armarTablaPagos(data) {
+    const { publico, tecnico, comisiones } = tablasDesdeConfig(data);
+    const t = {};
+    for (const m of METODOS_PAGO) {
+      t[m.clave] = {
+        publico: publico[m.clave] != null ? String(publico[m.clave]).replace('.', ',') : '',
+        tecnico: tecnico[m.clave] != null ? String(tecnico[m.clave]).replace('.', ',') : '',
+        comision: comisiones[m.clave] != null ? String(comisiones[m.clave]).replace('.', ',') : '',
+      };
+    }
+    return t;
+  }
+
+  function armarTablaCuotas(data) {
+    const { costosCuotas } = tablasDesdeConfig(data);
+    const t = {};
+    for (const n of CUOTAS_POSIBLES.filter((x) => x > 1)) t[n] = costosCuotas[n] != null ? String(costosCuotas[n]).replace('.', ',') : '';
+    return t;
+  }
+
+  function cambiarTablaPagos(metodo, columna, valor) {
+    setTablaPagos((prev) => ({ ...prev, [metodo]: { ...prev[metodo], [columna]: valor } }));
+  }
+
+  // Pasa la tabla editable a los 3 JSON que lee el backend (solo guarda
+  // los metodos con un valor distinto de 0).
+  function serializarTablaPagos() {
+    const out = { publico: {}, tecnico: {}, comision: {} };
+    for (const m of METODOS_PAGO) {
+      for (const col of ['publico', 'tecnico', 'comision']) {
+        const txt = String(tablaPagos[m.clave]?.[col] ?? '').trim().replace(',', '.');
+        if (txt === '') continue;
+        const n = Number(txt);
+        if (Number.isNaN(n)) throw new Error(`Valor inválido en "${m.label}": ${tablaPagos[m.clave][col]}`);
+        if (col === 'comision' && (n < 0 || n >= 50)) throw new Error(`La comisión de "${m.label}" tiene que estar entre 0 y 50%`);
+        if (n !== 0) out[col][m.clave] = n;
+      }
+    }
+    const cuotasOut = {};
+    for (const n of CUOTAS_POSIBLES.filter((x) => x > 1)) {
+      const txt = String(tablaCuotas[n] ?? '').trim().replace(',', '.');
+      if (txt === '') continue;
+      const v = Number(txt);
+      if (Number.isNaN(v) || v < 0 || v >= 80) throw new Error(`Costo inválido para ${n} cuotas: ${tablaCuotas[n]}`);
+      cuotasOut[n] = v;
+    }
+    return {
+      costos_cuotas_sin_interes: JSON.stringify(cuotasOut),
+      cuotas_sin_interes_max: String(cuotasMax),
+      ajustes_metodo_pago: JSON.stringify(out.publico),
+      ajustes_metodo_pago_tecnico: JSON.stringify(out.tecnico),
+      comisiones_metodo_pago: JSON.stringify(out.comision),
+    };
+  }
 
   function cambiarValor(clave, valor) {
     setValores((prev) => ({ ...prev, [clave]: valor }));
@@ -105,12 +179,13 @@ export default function Configuracion() {
     setGuardando(true);
     setError(null);
     try {
-      const body = { ...valores, ajustes_metodo_pago: ajustesMetodoPago, ajustes_metodo_pago_tecnico: ajustesMetodoPagoTecnico };
-      try { JSON.parse(ajustesMetodoPago || '{}'); } catch { throw new Error('El JSON de "Ajustes por método de pago (público)" no es válido'); }
-      try { JSON.parse(ajustesMetodoPagoTecnico || '{}'); } catch { throw new Error('El JSON de "Ajustes por método de pago (cliente técnico)" no es válido'); }
+      const body = { ...valores, ...serializarTablaPagos() };
       const actualizado = await api.put('/config', body);
       setConfig(actualizado);
       setValores(actualizado);
+      setTablaPagos(armarTablaPagos(actualizado));
+      setTablaCuotas(armarTablaCuotas(actualizado));
+      setCuotasMax(cuotasMaxDesdeConfig(actualizado));
       toast('Guardado ✓');
     } catch (err) {
       setError(err.message);
@@ -228,48 +303,80 @@ export default function Configuracion() {
               {grupo.campos.map((campo) => (
                 <div key={campo.clave} style={{ marginBottom: 10 }}>
                   <label className="muted" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>{campo.label}</label>
-                  <input
-                    value={valores[campo.clave] ?? ''}
-                    onChange={(e) => cambiarValor(campo.clave, e.target.value)}
-                    style={{ width: '100%' }}
-                  />
+                  {campo.opciones ? (
+                    <select value={valores[campo.clave] ?? campo.opciones[0]} onChange={(e) => cambiarValor(campo.clave, e.target.value)} style={{ width: '100%' }}>
+                      {campo.opciones.map((o) => <option key={o} value={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input
+                      value={valores[campo.clave] ?? ''}
+                      onChange={(e) => cambiarValor(campo.clave, e.target.value)}
+                      style={{ width: '100%' }}
+                    />
+                  )}
                 </div>
               ))}
             </div>
           </details>
         ))}
 
-        <details className="panel" style={{ marginBottom: 16 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 16 }}>Ajustes por forma de pago — Público</summary>
+        <details className="panel" style={{ marginBottom: 16 }} open>
+          <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 16 }}>Formas de pago: descuentos, recargos y comisiones de Mercado Pago</summary>
           <div style={{ marginTop: 14 }}>
             <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              Se usa cuando la venta no tiene cliente seleccionado. JSON con el % de recargo (positivo) o descuento (negativo) por método de pago. Ejemplo: {'{"efectivo": -5, "tarjeta_credito": 10}'}
+              <strong>Público / Técnico:</strong> % de descuento (negativo, ej. -10) o recargo (positivo) que decidís vos. Se usa "Técnico" cuando la venta tiene un cliente de la agenda, y "Público" cuando no.
+              <br />
+              <strong>Comisión MP:</strong> el % que te cobra Mercado Pago, <em>sin IVA</em>, tal cual figura en Mercado Pago → Costos y cuotas. El sistema le suma el IVA y se lo traslada al cliente para que te quede limpio lo mismo que en efectivo.
             </p>
-            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              <strong>Importante:</strong> las claves válidas son exactamente estas cuatro: <code>efectivo</code>, <code>transferencia</code>, <code>tarjeta_debito</code>, <code>tarjeta_credito</code>. Si se escribe otra cosa (por ejemplo <code>debito</code> o <code>credito</code>) el ajuste nunca se aplica, aunque parezca correcto.
-            </p>
-            <textarea
-              value={ajustesMetodoPago}
-              onChange={(e) => setAjustesMetodoPago(e.target.value)}
-              style={{ width: '100%', minHeight: 70, fontFamily: 'monospace', fontSize: 13 }}
-            />
-          </div>
-        </details>
+            <table className="simple-table">
+              <thead>
+                <tr><th>Forma de pago</th><th>Público %</th><th>Técnico %</th><th>Comisión MP % (sin IVA)</th><th>Recargo real al cliente</th></tr>
+              </thead>
+              <tbody>
+                {METODOS_PAGO.map((m) => {
+                  const fila = tablaPagos[m.clave] || {};
+                  const usaMp = m.clave !== 'efectivo' && m.clave !== 'transferencia';
+                  const com = Number(String(fila.comision || '0').replace(',', '.')) || 0;
+                  const efectiva = (com * IVA_COMISION) / 100;
+                  const recargoReal = usaMp && com > 0 && efectiva < 1 ? ((1 / (1 - efectiva) - 1) * 100).toFixed(2).replace('.', ',') : null;
+                  return (
+                    <tr key={m.clave}>
+                      <td>{m.label}</td>
+                      <td><input className="input-inline" inputMode="decimal" value={fila.publico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'publico', e.target.value)} placeholder="0" style={{ width: 70 }} /></td>
+                      <td><input className="input-inline" inputMode="decimal" value={fila.tecnico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'tecnico', e.target.value)} placeholder="0" style={{ width: 70 }} /></td>
+                      <td>
+                        {usaMp
+                          ? <input className="input-inline" inputMode="decimal" value={fila.comision ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'comision', e.target.value)} placeholder="0" style={{ width: 70 }} />
+                          : <span className="muted">—</span>}
+                      </td>
+                      <td className="muted">{recargoReal ? `+${recargoReal}%` : '—'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
 
-        <details className="panel" style={{ marginBottom: 16 }}>
-          <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 16 }}>Ajustes por forma de pago — Cliente técnico</summary>
-          <div style={{ marginTop: 14 }}>
+            <h3 style={{ margin: '18px 0 6px', fontSize: 14 }}>Cuotas sin interés (Point y QR con crédito)</h3>
             <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              Se usa cuando la venta tiene un cliente de la agenda seleccionado (todos los de la agenda son técnicos). Ejemplo: {'{"efectivo": -10, "transferencia": -5}'}
+              El costo de cada cantidad de cuotas, tal cual figura en Mercado Pago → Costos y cuotas → Por ofrecer cuotas. Se suma a la comisión de crédito (+ IVA) y se traslada al precio. Tiene que coincidir con lo que tenés activado en Mercado Pago.
             </p>
-            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              <strong>Importante:</strong> las claves válidas son exactamente estas cuatro: <code>efectivo</code>, <code>transferencia</code>, <code>tarjeta_debito</code>, <code>tarjeta_credito</code>. Si se escribe otra cosa (por ejemplo <code>debito</code> o <code>credito</code>) el ajuste nunca se aplica, aunque parezca correcto.
-            </p>
-            <textarea
-              value={ajustesMetodoPagoTecnico}
-              onChange={(e) => setAjustesMetodoPagoTecnico(e.target.value)}
-              style={{ width: '100%', minHeight: 70, fontFamily: 'monospace', fontSize: 13 }}
-            />
+            <label className="campo" style={{ maxWidth: 260 }}>
+              <span>Ofrecés hasta</span>
+              <select value={cuotasMax} onChange={(e) => setCuotasMax(Number(e.target.value))}>
+                {CUOTAS_POSIBLES.map((n) => <option key={n} value={n}>{n === 1 ? 'Sin cuotas (solo 1 pago)' : `${n} cuotas`}</option>)}
+              </select>
+            </label>
+            <table className="simple-table" style={{ maxWidth: 420 }}>
+              <thead><tr><th>Cuotas</th><th>Costo MP % (sin IVA)</th></tr></thead>
+              <tbody>
+                {CUOTAS_POSIBLES.filter((n) => n > 1).map((n) => (
+                  <tr key={n} style={{ opacity: n <= cuotasMax ? 1 : 0.5 }}>
+                    <td>{n} cuotas</td>
+                    <td><input className="input-inline" inputMode="decimal" value={tablaCuotas[n] ?? ''} onChange={(e) => setTablaCuotas((t) => ({ ...t, [n]: e.target.value }))} style={{ width: 80 }} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </details>
 

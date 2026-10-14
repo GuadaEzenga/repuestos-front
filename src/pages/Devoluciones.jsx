@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
+import { labelMetodo } from '../utils/pagos';
 import { parseNumero } from '../utils/numero';
 
 const PAGE_SIZE = 30;
@@ -231,7 +232,7 @@ export default function Devoluciones() {
                           <td>{String(v.fecha).slice(0, 10)}</td>
                           <td>{v.cliente_nombre ? `${v.cliente_nombre} ${v.cliente_apellido || ''}` : 'Consumidor final'}</td>
                           <td>{formatoMoneda(v.total)}</td>
-                          <td>{v.metodo_pago}</td>
+                          <td>{labelMetodo(v.metodo_pago)}</td>
                           <td style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                             <button type="button" className="btn-link" onClick={() => toggleDetalleVenta(v.id)}>
                               {abiertoDetalleVenta === v.id ? 'Ocultar' : 'Ver'}

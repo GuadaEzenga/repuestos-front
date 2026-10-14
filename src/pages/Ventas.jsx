@@ -1,11 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useUi } from '../context/UiContext';
-import { ESTADO_CLIENTE_FACTURA, useFacturacionCliente } from '../hooks/useFacturacionCliente';
-
-const TIPOS_DOC = ['DNI', 'CUIT', 'CUIL'];
-const CONDICIONES_FISCALES = ['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
-const METODOS_DEFAULT = ['efectivo', 'transferencia', 'tarjeta_debito', 'tarjeta_credito'];
+import FacturacionForm from '../components/FacturacionForm';
+import { CUOTAS_POSIBLES, METODOS_PAGO, esMetodoCredito, textoFormaPago } from '../utils/pagos';
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
@@ -32,9 +29,9 @@ export default function Ventas() {
   const [facturando, setFacturando] = useState(null); // id de la venta en curso
   const [errorFactura, setErrorFactura] = useState(null);
   const [emitiendo, setEmitiendo] = useState(false);
-  // Maquina de estados del formulario de facturar (busqueda en el padron
-  // de AFIP, bloqueo de campos, validacion) -- ver hooks/useFacturacionCliente.
-  const cliente = useFacturacionCliente();
+  // Lo que arma FacturacionForm ("A cliente" / "A mí").
+  const [facturacionForm, setFacturacionForm] = useState({ facturacion: { modo: 'mi' }, valido: true, error: null });
+  const [facturandoClienteId, setFacturandoClienteId] = useState(null);
 
   // --- Editar una venta ya confirmada: cliente, forma de pago y notas
   // (los items/cantidades/stock no se tocan -- para eso están las
@@ -43,6 +40,7 @@ export default function Ventas() {
   const [editandoId, setEditandoId] = useState(null);
   const [editClienteId, setEditClienteId] = useState('');
   const [editMetodoPago, setEditMetodoPago] = useState('efectivo');
+  const [editCuotas, setEditCuotas] = useState(1);
   const [editNotas, setEditNotas] = useState('');
   const [clientesTodos, setClientesTodos] = useState([]);
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
@@ -56,6 +54,7 @@ export default function Ventas() {
     setEditandoId(v.id);
     setEditClienteId(v.cliente_id || '');
     setEditMetodoPago(v.metodo_pago);
+    setEditCuotas(v.cuotas || 1);
     setEditNotas(v.notas || '');
     setErrorEdicion(null);
   }
@@ -67,6 +66,7 @@ export default function Ventas() {
       const actualizada = await api.put(`/ventas/${id}`, {
         cliente_id: editClienteId || null,
         metodo_pago: editMetodoPago,
+        cuotas: esMetodoCredito(editMetodoPago) ? editCuotas : null,
         notas: editNotas || null,
       });
       const cliente = clientesTodos.find((c) => String(c.id) === String(editClienteId));
@@ -133,39 +133,42 @@ export default function Ventas() {
 
   function abrirFacturar(venta) {
     setFacturando(venta.id);
+    setFacturandoClienteId(venta.cliente_id || null);
     setErrorFactura(null);
-    // Si la venta tiene un cliente vinculado, arrancamos con su nombre como
-    // base -- pero queda editable aca mismo (mientras no haya match de
-    // AFIP), porque esto es justamente lo que se manda a AFIP y lo que va a
-    // aparecer impreso en el PDF, así que si el nombre del cliente está mal
-    // escrito o incompleto se puede corregir en el momento sin tener que ir
-    // a arreglar la ficha del cliente primero. Por defecto arranca en
-    // Consumidor Final (que no necesita nada mas); si el cliente real pide
-    // otra condición, ahí se carga el CUIT/CUIL y se autocompleta sola.
-    const nombreCliente = [venta.cliente_nombre, venta.cliente_apellido].filter(Boolean).join(' ');
-    cliente.reset({ nombre: nombreCliente || '' });
   }
 
   async function emitirFactura(id) {
+    if (!facturacionForm.valido) return;
     setEmitiendo(true);
     setErrorFactura(null);
     try {
-      const actualizada = await api.post(`/ventas/${id}/facturar`, { ...cliente.campos, confirmar: true });
+      const actualizada = await api.post(`/ventas/${id}/facturar`, { facturacion: facturacionForm.facturacion, confirmar: true });
       setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, ...actualizada } : v)));
       setFacturando(null);
       toast('Factura emitida ✓');
     } catch (err) {
       setErrorFactura(err.message);
+      setVentas((prev) => prev.map((v) => (v.id === id ? { ...v, factura_error: err.message } : v)));
     } finally {
       setEmitiendo(false);
     }
   }
+
+  // Efectivo sin factura es valido (la factura es opcional); solo se marca
+  // como pendiente si no es efectivo o si un intento de facturar fallo.
+  const esPendiente = (v) => !v.afip_cae && (v.metodo_pago !== 'efectivo' || !!v.factura_error);
+  const pendientes = ventas.filter(esPendiente).length;
 
   const totalPaginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="page">
       <h1>Ventas</h1>
+      {pendientes > 0 && (
+        <div className="error-box">
+          Hay {pendientes} venta{pendientes === 1 ? '' : 's'} pendiente{pendientes === 1 ? '' : 's'} de facturar en esta página (las que no son en efectivo tienen que facturarse): usá "⋯ → Facturar".
+        </div>
+      )}
 
       {error && <div className="error-box">{error}</div>}
 
@@ -191,8 +194,14 @@ export default function Ventas() {
                       <td>{String(v.fecha).slice(0, 10)}</td>
                       <td>{v.cliente_nombre ? `${v.cliente_nombre} ${v.cliente_apellido || ''}` : 'Consumidor final'}</td>
                       <td>{formatoMoneda(v.total)}</td>
-                      <td>{v.metodo_pago}</td>
-                      <td>{v.afip_cae ? <span style={{ color: 'var(--success)' }}>Facturada</span> : <span className="muted">Sin facturar</span>}</td>
+                      <td>{textoFormaPago(v.metodo_pago, v.cuotas)}</td>
+                      <td>
+                        {v.afip_cae
+                          ? <span style={{ color: 'var(--success)' }}>Facturada</span>
+                          : esPendiente(v)
+                            ? <span style={{ color: 'var(--danger, #dc2626)', fontWeight: 600 }} title={v.factura_error || ''}>Pendiente de facturar</span>
+                            : <span className="muted">Sin factura (efectivo)</span>}
+                      </td>
                       <td className="celda-acciones">
                         <button type="button" className="btn-link" onClick={() => toggleDetalle(v.id)}>
                           {abierto === v.id ? 'Ocultar' : 'Ver'}
@@ -266,12 +275,17 @@ export default function Ventas() {
                               <select value={editClienteId} onChange={(e) => setEditClienteId(e.target.value)} style={{ flex: 1 }}>
                                 <option value="">Consumidor final (sin cliente)</option>
                                 {clientesTodos.map((c) => (
-                                  <option key={c.id} value={c.id}>{c.nombre} {c.apellido}</option>
+                                  <option key={c.id} value={c.id}>{c.nombre} {c.apellido || ''}</option>
                                 ))}
                               </select>
                               <select value={editMetodoPago} onChange={(e) => setEditMetodoPago(e.target.value)}>
-                                {METODOS_DEFAULT.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+                                {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
                               </select>
+                              {esMetodoCredito(editMetodoPago) && (
+                                <select value={editCuotas} onChange={(e) => setEditCuotas(Number(e.target.value))}>
+                                  {CUOTAS_POSIBLES.map((n) => <option key={n} value={n}>{n === 1 ? '1 pago' : `${n} cuotas`}</option>)}
+                                </select>
+                              )}
                             </div>
                             <input
                               placeholder="Notas (opcional)"
@@ -298,74 +312,16 @@ export default function Ventas() {
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.
                             </p>
-                            <select
-                              value={cliente.campos.condicion_fiscal}
-                              onChange={(e) => cliente.setCondicionFiscal(e.target.value)}
-                              style={{ width: '100%' }}
-                            >
-                              {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-
-                            {cliente.campos.condicion_fiscal === 'Consumidor Final' ? (
-                              <p className="muted" style={{ marginBottom: 0 }}>
-                                Consumidor Final no necesita ningún dato del cliente -- se factura así, sin nombre ni documento.
-                              </p>
-                            ) : (
-                              <>
-                                <p className="muted" style={{ marginBottom: 10 }}>
-                                  Esta condición necesita el CUIT o CUIL del cliente. Cargalo y se autocompleta el nombre y domicilio desde AFIP (podés corregirlos si no hubo match).
-                                </p>
-                                <div className="form-row">
-                                  <select
-                                    value={cliente.campos.tipo_documento}
-                                    onChange={(e) => cliente.setTipoDocumento(e.target.value)}
-                                  >
-                                    {['CUIT', 'CUIL'].map((t) => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                  <input
-                                    placeholder="Número de CUIT/CUIL"
-                                    value={cliente.campos.documento}
-                                    onChange={(e) => cliente.setDocumento(e.target.value)}
-                                  />
-                                  {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
-                                    <button type="button" onClick={() => cliente.buscarEnPadron()} className="btn-secondary">
-                                      Reintentar
-                                    </button>
-                                  )}
-                                </div>
-                                {cliente.estado === ESTADO_CLIENTE_FACTURA.SEARCHING && (
-                                  <p className="muted" style={{ marginTop: 4 }}>Buscando en el padrón de AFIP...</p>
-                                )}
-                                {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
-                                  <p className="login-error" style={{ marginTop: 4 }}>
-                                    {cliente.errorPadron || 'AFIP no tiene datos para ese documento.'} Completá los datos a mano para poder facturar.
-                                  </p>
-                                )}
-                                <input
-                                  placeholder="Nombre y apellido / Razón social"
-                                  value={cliente.campos.nombre}
-                                  disabled={cliente.nombreBloqueado}
-                                  onChange={(e) => cliente.setNombreManual(e.target.value)}
-                                  style={{ width: '100%', marginTop: 8 }}
-                                />
-                                <input
-                                  placeholder="Domicilio"
-                                  value={cliente.campos.direccion}
-                                  disabled={cliente.domicilioBloqueado}
-                                  onChange={(e) => cliente.setDireccionManual(e.target.value)}
-                                  style={{ width: '100%', marginTop: 8 }}
-                                />
-                                {cliente.errorValidacion && (
-                                  <p className="login-error" style={{ marginTop: 4 }}>{cliente.errorValidacion}</p>
-                                )}
-                              </>
+                            {v.factura_error && (
+                              <p className="login-error" style={{ marginTop: 0 }}>Último intento: {v.factura_error}</p>
                             )}
+                            <FacturacionForm clienteId={facturandoClienteId} onChange={setFacturacionForm} compacto />
                             {errorFactura && <p className="login-error">{errorFactura}</p>}
                             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                               <button
                                 type="button"
                                 onClick={() => emitirFactura(v.id)}
-                                disabled={emitiendo || !cliente.puedeEmitir}
+                                disabled={emitiendo || !facturacionForm.valido}
                                 className="btn-danger"
                               >
                                 {emitiendo ? 'Emitiendo...' : 'Confirmar y emitir factura real'}

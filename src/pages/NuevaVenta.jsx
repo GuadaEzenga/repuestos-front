@@ -3,10 +3,8 @@ import api from '../api/client';
 import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
-
-const METODOS_DEFAULT = ['efectivo', 'transferencia', 'tarjeta_debito', 'tarjeta_credito'];
-const TIPOS_DOC = ['DNI', 'CUIT', 'CUIL'];
-const CONDICIONES_FISCALES = ['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
+import FacturacionForm from '../components/FacturacionForm';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(valor || 0);
@@ -61,9 +59,12 @@ export default function NuevaVenta() {
   const [busquedaCliente, setBusquedaCliente] = useState('');
   const [mostrarNuevoCliente, setMostrarNuevoCliente] = useState(false);
   const [guardandoClienteRapido, setGuardandoClienteRapido] = useState(false);
-  const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', apellido: '', telefono: '', documento: '', tipo_documento: 'DNI' });
+  const [nuevoCliente, setNuevoCliente] = useState({ nombre: '', telefono: '' });
 
   const [metodoPago, setMetodoPago] = useState('efectivo');
+  const [cuotas, setCuotas] = useState(1);
+  // Como se factura la venta (todas se facturan): lo arma FacturacionForm.
+  const [facturacionVenta, setFacturacionVenta] = useState({ facturacion: { modo: 'mi' }, valido: true, error: null });
   const [montoRecibido, setMontoRecibido] = useState('');
   const [notas, setNotas] = useState('');
   const [totalManual, setTotalManual] = useState('');
@@ -73,8 +74,8 @@ export default function NuevaVenta() {
   const [ventaCreada, setVentaCreada] = useState(null);
 
   const [facturando, setFacturando] = useState(false);
-  const [mostrarFacturar, setMostrarFacturar] = useState(false);
-  const [datosFactura, setDatosFactura] = useState({ tipo_documento: 'DNI', documento: '', condicion_fiscal: 'Consumidor Final' });
+  // Reintento de factura si AFIP fallo al confirmar la venta.
+  const [facturacionReintento, setFacturacionReintento] = useState({ facturacion: { modo: 'mi' }, valido: true, error: null });
   const [resultadoFactura, setResultadoFactura] = useState(null);
   const [errorFactura, setErrorFactura] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
@@ -115,32 +116,10 @@ export default function NuevaVenta() {
     e.preventDefault();
   }
 
-  // Si nunca se guardó la tabla de ajustes de técnico desde Configuración
-  // (clave ausente o vacía), no hay que aplicar 0% en silencio -- mismo
-  // default que el backend (ver carrito.js) hasta que ella lo cambie a mano.
-  const DEFAULT_AJUSTES_TECNICO = '{"efectivo": -10, "transferencia": -5}';
-
-  function parsearTabla(json, defaultJson = '{}') {
-    try { return JSON.parse(json || defaultJson); } catch { return {}; }
-  }
-
-  // Tabla publica (sin cliente seleccionado) vs tabla tecnico (hay cliente
-  // seleccionado) -- se usa UNA u otra, no se suman. Misma logica que
-  // carrito.js en el backend.
-  const ajustesPublico = useMemo(() => parsearTabla(config?.ajustes_metodo_pago), [config]);
-  const ajustesTecnico = useMemo(() => parsearTabla(config?.ajustes_metodo_pago_tecnico, DEFAULT_AJUSTES_TECNICO), [config]);
   // Todos los clientes de la agenda son tecnicos -- si hay uno seleccionado,
   // se usa la tabla de descuentos tecnico; si no (venta de mostrador), la
-  // publica. Misma logica que el backend (ver carrito.js).
+  // publica. Misma logica que el backend (ver utils/pagos.js).
   const esTecnico = !!clienteSeleccionado;
-  const tablaVigente = esTecnico ? ajustesTecnico : ajustesPublico;
-
-  // Antes esto unia las claves de METODOS_DEFAULT con las claves sueltas de
-  // la config de ajustes por metodo de pago (texto libre en Configuracion).
-  // Si ahi se escribia "debito" en vez de "tarjeta_debito" aparecia como un
-  // metodo de pago repetido y ademas invalido (el backend no lo reconoce).
-  // El dropdown debe mostrar siempre los 4 metodos validos, nada mas.
-  const metodosPago = METODOS_DEFAULT;
 
   // Igual que el programa original: apenas se hace click en el buscador (sin
   // escribir nada todavía) ya se muestran productos, y a medida que se
@@ -151,11 +130,9 @@ export default function NuevaVenta() {
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
-      .slice(0, hayQuery ? 8 : 20)
       .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio, stock: p.stock }));
     const grps = grupos
       .filter((g) => !hayQuery || coincideTexto(g.nombre, busqueda))
-      .slice(0, hayQuery ? 4 : 6)
       .map((g) => ({ kind: 'grupo', id: g.id, descripcion: g.nombre, cantidad_productos: g.cantidad_productos }));
     return [...grps, ...prods];
   }, [busqueda, buscadorEnfocado, productos, grupos]);
@@ -385,14 +362,9 @@ export default function NuevaVenta() {
 
   const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
-  function redondear(valor, unidad) {
-    return Math.round(valor / unidad) * unidad;
-  }
-
-  const unidadRedondeo = Number(config?.redondeo_unidad || 10);
-  const ajustePct = Number(tablaVigente[metodoPago] || 0);
-  const montoAjuste = subtotalEstimado * (ajustePct / 100);
-  const totalEstimado = redondear(subtotalEstimado + montoAjuste, unidadRedondeo);
+  const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
+  const { ajustePct, montoAjuste, comisionPct, comisionConIvaPct, recargoComision } = calculo;
+  const totalEstimado = calculo.total;
   // Total que realmente se va a cobrar: el manual si se cargó, sino el estimado.
   const totalAcobrar = parseNumero(totalManual) ?? totalEstimado;
   // Vuelto en vivo: se recalcula en cada tecla mientras se escribe el monto
@@ -411,8 +383,7 @@ export default function NuevaVenta() {
     if (!clienteBuscadorEnfocado) return [];
     const hayQuery = busquedaCliente.trim() !== '';
     return clientesTodos
-      .filter((c) => !hayQuery || coincideTexto(`${c.nombre || ''} ${c.apellido || ''} ${c.documento || ''} ${c.nombre_negocio || ''}`, busquedaCliente))
-      .slice(0, hayQuery ? 8 : 20);
+      .filter((c) => !hayQuery || coincideTexto(`${c.nombre || ''} ${c.apellido || ''} ${c.nombre_negocio || ''} ${c.facturacion_resumen || ''}`, busquedaCliente));
   }, [busquedaCliente, clienteBuscadorEnfocado, clientesTodos]);
 
   async function crearClienteAlVuelo() {
@@ -425,7 +396,7 @@ export default function NuevaVenta() {
       setMostrarNuevoCliente(false);
       setBusquedaCliente('');
       setClienteBuscadorEnfocado(false);
-      setNuevoCliente({ nombre: '', apellido: '', telefono: '', documento: '', tipo_documento: 'DNI' });
+      setNuevoCliente({ nombre: '', telefono: '' });
       toast('Cliente creado ✓');
     } catch (err) {
       toast(err.message, { type: 'error', duration: 5000 });
@@ -455,6 +426,10 @@ export default function NuevaVenta() {
 
   async function confirmarVenta() {
     if (carrito.length === 0) return;
+    if (!facturacionVenta.valido) {
+      setErrorVenta(facturacionVenta.error || 'Revisá los datos de facturación.');
+      return;
+    }
     setGuardando(true);
     setErrorVenta(null);
     try {
@@ -465,6 +440,8 @@ export default function NuevaVenta() {
         notas: notas || null,
         monto_recibido: metodoPago === 'efectivo' && montoRecibido ? parseNumero(montoRecibido) : null,
         total_manual: parseNumero(totalManual),
+        cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
+        facturacion: facturacionVenta.facturacion,
       };
       const venta = await api.post('/ventas', body);
       setVentaCreada(venta);
@@ -483,12 +460,12 @@ export default function NuevaVenta() {
     setClienteSeleccionado(null);
     setBusquedaCliente('');
     setMetodoPago('efectivo');
+    setCuotas(1);
     setMontoRecibido('');
     setNotas('');
     setTotalManual('');
     setVentaCreada(null);
     setErrorVenta(null);
-    setMostrarFacturar(false);
     setResultadoFactura(null);
     setErrorFactura(null);
     setTimeout(() => buscadorRef.current?.focus(), 50);
@@ -507,24 +484,18 @@ export default function NuevaVenta() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function abrirFacturar() {
-    setDatosFactura({
-      tipo_documento: clienteSeleccionado?.tipo_documento || 'DNI',
-      documento: clienteSeleccionado?.documento || '',
-      condicion_fiscal: clienteSeleccionado?.condicion_fiscal || 'Consumidor Final',
-    });
-    setMostrarFacturar(true);
-  }
-
+  // Reintentar la factura si AFIP fallo al confirmar la venta.
   async function emitirFactura() {
+    if (!facturacionReintento.valido) return;
     setFacturando(true);
     setErrorFactura(null);
     try {
       const resultado = await api.post(`/ventas/${ventaCreada.id}/facturar`, {
-        ...datosFactura,
+        facturacion: facturacionReintento.facturacion,
         confirmar: true,
       });
       setResultadoFactura(resultado);
+      setVentaCreada((v) => ({ ...v, ...resultado, factura_error: null }));
     } catch (err) {
       setErrorFactura(err.message);
     } finally {
@@ -560,12 +531,26 @@ export default function NuevaVenta() {
 
   // --- Pantalla de resultado despues de crear la venta ---
   if (ventaCreada) {
+    const facturada = !!ventaCreada.afip_cae;
+    // Efectivo sin factura a proposito (no es un error de AFIP).
+    const sinFacturaElegido = !facturada && !ventaCreada.factura_error && ventaCreada.metodo_pago === 'efectivo';
     return (
       <div className="page">
         <div className="comprobante-pantalla">
           <h1 style={{ textAlign: 'center' }}>
-            {resultadoFactura ? `Factura emitida — Venta #${ventaCreada.numero}` : `Venta #${ventaCreada.numero} registrada`}
+            {facturada
+              ? `Venta #${ventaCreada.numero} facturada`
+              : sinFacturaElegido
+                ? `Venta #${ventaCreada.numero} registrada (sin factura)`
+                : `Venta #${ventaCreada.numero} registrada — PENDIENTE DE FACTURAR`}
           </h1>
+
+          {!facturada && !sinFacturaElegido && (
+            <div className="error-box" style={{ marginBottom: 12 }}>
+              La venta se guardó pero AFIP no autorizó la factura: {ventaCreada.factura_error || errorFactura || 'error desconocido'}.
+              Podés reintentar ahora o más tarde desde Ventas.
+            </div>
+          )}
 
           <div className="comprobante-visor panel">
             {cargandoPdf && <p className="muted">Generando comprobante...</p>}
@@ -576,47 +561,27 @@ export default function NuevaVenta() {
 
           <div className="comprobante-acciones">
             <button type="button" onClick={descargarComprobante} className="btn-primary">
-              {resultadoFactura ? 'Descargar factura PDF' : 'Descargar comprobante'}
+              {facturada ? 'Descargar factura PDF' : 'Descargar comprobante'}
             </button>
-            {!ventaCreada.afip_cae && !mostrarFacturar && !resultadoFactura && (
-              <button type="button" onClick={abrirFacturar} className="btn-secondary">Facturar (AFIP)</button>
-            )}
             <button type="button" onClick={nuevaVentaLimpia} className="btn-secondary">Nueva venta</button>
           </div>
 
-          {mostrarFacturar && !resultadoFactura && (
+          {!facturada && (
             <div className="factura-box">
               <p className="muted" style={{ marginTop: 0 }}>
-                Esto emite una factura real ante AFIP con tu certificado de producción. No se puede deshacer.
+                {sinFacturaElegido ? 'Si el cliente pide factura:' : 'Reintentar factura'} (se emite una factura real ante AFIP, no se puede deshacer).
               </p>
-              <div className="form-row">
-                <select value={datosFactura.tipo_documento} onChange={(e) => setDatosFactura((d) => ({ ...d, tipo_documento: e.target.value }))}>
-                  {TIPOS_DOC.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input
-                  placeholder="Número de documento"
-                  value={datosFactura.documento}
-                  onChange={(e) => setDatosFactura((d) => ({ ...d, documento: e.target.value }))}
-                />
-              </div>
-              <select
-                value={datosFactura.condicion_fiscal}
-                onChange={(e) => setDatosFactura((d) => ({ ...d, condicion_fiscal: e.target.value }))}
-                style={{ marginTop: 8, width: '100%' }}
-              >
-                {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <FacturacionForm clienteId={ventaCreada.cliente_id || null} onChange={setFacturacionReintento} compacto />
               {errorFactura && <p className="login-error">{errorFactura}</p>}
-              <button type="button" onClick={emitirFactura} disabled={facturando} className="btn-danger" style={{ marginTop: 10 }}>
-                {facturando ? 'Emitiendo...' : 'Confirmar y emitir factura real'}
+              <button type="button" onClick={emitirFactura} disabled={facturando || !facturacionReintento.valido} className="btn-danger" style={{ marginTop: 10 }}>
+                {facturando ? 'Emitiendo...' : sinFacturaElegido ? 'Facturar' : 'Reintentar factura'}
               </button>
             </div>
           )}
 
-          {resultadoFactura && (
+          {facturada && (
             <div className="factura-box" style={{ textAlign: 'center' }}>
-              <p><strong>CAE:</strong> {resultadoFactura.afip_cae}</p>
-              <p><strong>Vencimiento CAE:</strong> {resultadoFactura.afip_cae_vencimiento}</p>
+              <p style={{ margin: 0 }}><strong>CAE:</strong> {ventaCreada.afip_cae} — <strong>Vto.:</strong> {ventaCreada.afip_cae_vencimiento}</p>
             </div>
           )}
         </div>
@@ -798,9 +763,17 @@ export default function NuevaVenta() {
                 {ajustePct !== 0 && (
                   <div className={`resumen-linea ${ajustePct < 0 ? 'descuento' : ''}`}>
                     <span>
-                      {esTecnico ? 'Cliente técnico' : 'Público'} · {metodoPago.replace(/_/g, ' ')} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
+                      {esTecnico ? 'Cliente técnico' : 'Público'} · {labelMetodo(metodoPago)} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
                     </span>
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
+                  </div>
+                )}
+                {comisionPct > 0 && (
+                  <div className="resumen-linea">
+                    <span>
+                      Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} (MP {String(Math.round(comisionPct * 100) / 100).replace('.', ',')}% + IVA = {String(comisionConIvaPct).replace('.', ',')}%)
+                    </span>
+                    <span>+{formatoMoneda(recargoComision)}</span>
                   </div>
                 )}
                 <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
@@ -826,7 +799,7 @@ export default function NuevaVenta() {
             {clienteSeleccionado ? (
               <div className="cliente-chip">
                 <div>
-                  <span>{clienteSeleccionado.nombre} {clienteSeleccionado.apellido}</span>
+                  <span>{clienteSeleccionado.nombre} {clienteSeleccionado.apellido || ''}</span>
                   <div className="muted" style={{ fontSize: 12 }}>Cliente técnico</div>
                 </div>
                 <button type="button" onClick={() => setClienteSeleccionado(null)} className="btn-link-danger">Quitar</button>
@@ -845,7 +818,7 @@ export default function NuevaVenta() {
                   <ul className="resultados-lista" onMouseDown={evitarPerderFoco}>
                     {resultadosCliente.map((c) => (
                       <li key={c.id} onClick={() => { setClienteSeleccionado(c); setBusquedaCliente(''); setClienteBuscadorEnfocado(false); }}>
-                        {c.nombre} {c.apellido}{c.nombre_negocio && <span className="muted"> · {c.nombre_negocio}</span>}
+                        {c.nombre} {c.apellido || ''}{c.nombre_negocio && <span className="muted"> · {c.nombre_negocio}</span>}
                       </li>
                     ))}
                   </ul>
@@ -854,8 +827,7 @@ export default function NuevaVenta() {
                   <button type="button" className="btn-link" onClick={() => setMostrarNuevoCliente(true)}>+ Cliente nuevo</button>
                 ) : (
                   <div className="nuevo-cliente-form">
-                    <input placeholder="Nombre" value={nuevoCliente.nombre} onChange={(e) => setNuevoCliente((n) => ({ ...n, nombre: e.target.value }))} />
-                    <input placeholder="Apellido" value={nuevoCliente.apellido} onChange={(e) => setNuevoCliente((n) => ({ ...n, apellido: e.target.value }))} />
+                    <input placeholder="Nombre completo" value={nuevoCliente.nombre} onChange={(e) => setNuevoCliente((n) => ({ ...n, nombre: e.target.value.toUpperCase() }))} />
                     <input placeholder="Teléfono" value={nuevoCliente.telefono} onChange={(e) => setNuevoCliente((n) => ({ ...n, telefono: e.target.value }))} />
                     <div className="form-row">
                       <button type="button" onClick={crearClienteAlVuelo} className="btn-primary" disabled={guardandoClienteRapido}>
@@ -871,9 +843,22 @@ export default function NuevaVenta() {
 
           <div className="panel" style={{ marginTop: 16 }}>
             <h2>Forma de pago</h2>
-            <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} style={{ width: '100%' }}>
-              {metodosPago.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+            <select value={metodoPago} onChange={(e) => { setMetodoPago(e.target.value); setCuotas(1); }} style={{ width: '100%' }}>
+              {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
             </select>
+            {esMetodoCredito(metodoPago) && (
+              <label className="campo" style={{ marginTop: 10 }}>
+                <span>Cuotas sin interés (el recargo ya está sumado al total)</span>
+                <select value={cuotas} onChange={(e) => setCuotas(Number(e.target.value))} style={{ width: '100%' }}>
+                  {opcionesCuotas(config).map((n) => <option key={n} value={n}>{n === 1 ? '1 pago' : `${n} cuotas sin interés`}</option>)}
+                </select>
+                {cuotas > 1 && (
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    En el Point cargá {formatoMoneda(totalAcobrar)} y elegí {cuotas} cuotas: {cuotas} de {formatoMoneda(totalAcobrar / cuotas)}.
+                  </span>
+                )}
+              </label>
+            )}
             {metodoPago === 'efectivo' && (
               <>
                 <input
@@ -901,15 +886,17 @@ export default function NuevaVenta() {
               onChange={(e) => setNotas(e.target.value)}
               style={{ width: '100%', marginTop: 10, minHeight: 60 }}
             />
+            <h2 style={{ marginTop: 16 }}>Facturar</h2>
+            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto permitirNoFacturar={metodoPago === 'efectivo'} config={config} />
             {errorVenta && <p className="login-error">{errorVenta}</p>}
             <button
               type="button"
               onClick={confirmarVenta}
-              disabled={carrito.length === 0 || guardando}
+              disabled={carrito.length === 0 || guardando || !facturacionVenta.valido}
               className="btn-primary"
               style={{ width: '100%', marginTop: 14, padding: 12 }}
             >
-              {guardando ? 'Guardando...' : 'Confirmar venta'}
+              {guardando ? 'Guardando y facturando...' : 'Confirmar venta y facturar'}
             </button>
           </div>
         </div>

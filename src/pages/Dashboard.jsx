@@ -5,6 +5,7 @@ import {
   PieChart, Pie, Cell, Legend, BarChart, Bar,
 } from 'recharts';
 import api from '../api/client';
+import { labelMetodo } from '../utils/pagos';
 
 const COLORES = ['#166e79', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0d2035'];
 
@@ -261,7 +262,7 @@ export default function Dashboard() {
                         <Cell key={entry.metodo_pago} fill={COLORES[i % COLORES.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value, name, props) => [`${value} venta${value === 1 ? '' : 's'} (${formatoMoneda(props.payload.total)})`, props.payload.metodo_pago]} />
+                    <Tooltip formatter={(value, name, props) => [`${value} venta${value === 1 ? '' : 's'} (${formatoMoneda(props.payload.total)})`, labelMetodo(props.payload.metodo_pago)]} />
                     <Legend />
                   </PieChart>
                 </ResponsiveContainer>

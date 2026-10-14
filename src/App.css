@@ -727,7 +727,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   overflow: hidden;
-  max-height: 260px;
+  max-height: 380px;
   overflow-y: auto;
 }
 .resultados-lista li {

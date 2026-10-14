@@ -3,10 +3,8 @@ import api from '../api/client';
 import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
-import { ESTADO_CLIENTE_FACTURA, useFacturacionCliente } from '../hooks/useFacturacionCliente';
-
-const CONDICIONES_FISCALES = ['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
-const METODOS_DEFAULT = ['efectivo', 'transferencia', 'tarjeta_debito', 'tarjeta_credito'];
+import FacturacionForm from '../components/FacturacionForm';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
@@ -25,15 +23,6 @@ function redondearCantidad(valor) {
 // esto en vez de asumir que ya es un número.
 function cantidadNum(l) {
   return parseNumero(l.cantidad) ?? 0;
-}
-
-// Si nunca se guardó la tabla de ajustes de técnico desde Configuración
-// (clave ausente o vacía), no hay que aplicar 0% en silencio -- mismo
-// default que el backend (ver carrito.js) hasta que ella lo cambie a mano.
-const DEFAULT_AJUSTES_TECNICO = '{"efectivo": -10, "transferencia": -5}';
-
-function parsearTabla(json, defaultJson = '{}') {
-  try { return JSON.parse(json || defaultJson); } catch { return {}; }
 }
 
 function ordenarAlfabetico(lista, textoDe) {
@@ -76,6 +65,7 @@ export default function Presupuestos() {
   const [clienteSeleccionado, setClienteSeleccionado] = useState(null);
   const [busquedaCliente, setBusquedaCliente] = useState('');
   const [metodoPago, setMetodoPago] = useState('efectivo');
+  const [cuotas, setCuotas] = useState(1);
   const [notas, setNotas] = useState('');
   const [guardando, setGuardando] = useState(false);
   const [errorForm, setErrorForm] = useState(null);
@@ -97,10 +87,9 @@ export default function Presupuestos() {
   const [facturando, setFacturando] = useState(null);
   const [errorFactura, setErrorFactura] = useState(null);
   const [emitiendo, setEmitiendo] = useState(false);
-  // Maquina de estados del formulario de facturar (busqueda en el padron
-  // de AFIP, bloqueo de campos, validacion) -- ver hooks/useFacturacionCliente,
-  // mismo hook que usa Ventas.jsx.
-  const cliente = useFacturacionCliente();
+  // Lo que arma FacturacionForm ("A cliente" / "A mí").
+  const [facturacionForm, setFacturacionForm] = useState({ facturacion: { modo: 'mi' }, valido: true, error: null });
+  const [facturandoClienteId, setFacturandoClienteId] = useState(null);
 
   async function cargarHistorial(paginaParam) {
     setLoading(true);
@@ -145,6 +134,7 @@ export default function Presupuestos() {
     setBusquedaCliente('');
     setNotas('');
     setMetodoPago('efectivo');
+    setCuotas(1);
     setErrorForm(null);
     setMostrarForm(true);
     cargarDatosCarrito();
@@ -174,24 +164,16 @@ export default function Presupuestos() {
     }
     setBusquedaCliente('');
     setNotas(p.notas || '');
-    setMetodoPago('efectivo');
+    setMetodoPago(p.metodo_pago || 'efectivo');
+    setCuotas(p.cuotas || 1);
     setErrorForm(null);
     setMostrarForm(true);
     setTimeout(() => buscadorRef.current?.focus(), 50);
   }
 
-  const ajustesPublico = useMemo(() => parsearTabla(config?.ajustes_metodo_pago), [config]);
-  const ajustesTecnico = useMemo(() => parsearTabla(config?.ajustes_metodo_pago_tecnico, DEFAULT_AJUSTES_TECNICO), [config]);
   // Todos los clientes de la agenda son tecnicos -- si hay uno seleccionado
   // se usa la tabla tecnico, si no la publica (venta/presupuesto de mostrador).
   const esTecnico = !!clienteSeleccionado;
-  const tablaVigente = esTecnico ? ajustesTecnico : ajustesPublico;
-  // Antes esto unia las claves de METODOS_DEFAULT con las claves sueltas de
-  // la config de ajustes por metodo de pago (texto libre en Configuracion).
-  // Si ahi se escribia "debito" en vez de "tarjeta_debito" aparecia como un
-  // metodo de pago repetido y ademas invalido (el backend no lo reconoce).
-  // El dropdown debe mostrar siempre los 4 metodos validos, nada mas.
-  const metodosPago = METODOS_DEFAULT;
 
   // Busqueda igual que el programa original: aparece apenas se hace foco, y
   // busca por palabras sueltas en cualquier orden sin importar mayusc/tildes.
@@ -200,11 +182,9 @@ export default function Presupuestos() {
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
-      .slice(0, hayQuery ? 8 : 20)
       .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio, stock: p.stock }));
     const grps = grupos
       .filter((g) => !hayQuery || coincideTexto(g.nombre, busqueda))
-      .slice(0, hayQuery ? 4 : 6)
       .map((g) => ({ kind: 'grupo', id: g.id, descripcion: g.nombre, cantidad_productos: g.cantidad_productos }));
     return [...grps, ...prods];
   }, [busqueda, buscadorEnfocado, productos, grupos]);
@@ -213,8 +193,7 @@ export default function Presupuestos() {
     if (!clienteBuscadorEnfocado) return [];
     const hayQuery = busquedaCliente.trim() !== '';
     return clientesTodos
-      .filter((c) => !hayQuery || coincideTexto(`${c.nombre || ''} ${c.apellido || ''} ${c.documento || ''} ${c.nombre_negocio || ''}`, busquedaCliente))
-      .slice(0, hayQuery ? 8 : 20);
+      .filter((c) => !hayQuery || coincideTexto(`${c.nombre || ''} ${c.apellido || ''} ${c.nombre_negocio || ''} ${c.facturacion_resumen || ''}`, busquedaCliente));
   }, [busquedaCliente, clienteBuscadorEnfocado, clientesTodos]);
 
   async function agregarAlCarrito(item) {
@@ -400,13 +379,9 @@ export default function Presupuestos() {
   // bajaba -- el presupuesto se guardaba bien (el backend calcula el total
   // real), pero lo que se veia en pantalla antes de guardar no reflejaba el
   // descuento.
-  function redondear(valor, unidad) {
-    return Math.round(valor / unidad) * unidad;
-  }
-  const unidadRedondeo = Number(config?.redondeo_unidad || 10);
-  const ajustePct = Number(tablaVigente[metodoPago] || 0);
-  const montoAjuste = subtotalEstimado * (ajustePct / 100);
-  const totalEstimado = redondear(subtotalEstimado + montoAjuste, unidadRedondeo);
+  const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
+  const { ajustePct, montoAjuste, comisionPct, comisionConIvaPct, recargoComision } = calculo;
+  const totalEstimado = calculo.total;
 
   function buscarClientes(texto) {
     setBusquedaCliente(texto);
@@ -484,6 +459,7 @@ export default function Presupuestos() {
         cliente_id: clienteSeleccionado?.id || null,
         items: itemsParaEnviar(),
         metodo_pago: metodoPago,
+        cuotas: esMetodoCredito(metodoPago) ? cuotas : null,
         notas: notas || null,
       };
       const creado = editandoId
@@ -528,19 +504,16 @@ export default function Presupuestos() {
 
   function abrirFacturar(p) {
     setFacturando(p.id);
+    setFacturandoClienteId(p.cliente_id || null);
     setErrorFactura(null);
-    // Si el presupuesto tiene un cliente vinculado, arranca con su nombre
-    // como base (igual que en Ventas.jsx) -- queda editable aca mismo
-    // mientras no haya match de AFIP.
-    const nombreCliente = [p.cliente_nombre, p.cliente_apellido].filter(Boolean).join(' ');
-    cliente.reset({ nombre: nombreCliente || '' });
   }
 
   async function emitirFactura(id) {
+    if (!facturacionForm.valido) return;
     setEmitiendo(true);
     setErrorFactura(null);
     try {
-      const actualizado = await api.post(`/presupuestos/${id}/facturar`, { ...cliente.campos, confirmar: true });
+      const actualizado = await api.post(`/presupuestos/${id}/facturar`, { facturacion: facturacionForm.facturacion, confirmar: true });
       setPresupuestos((prev) => prev.map((p) => (p.id === id ? { ...p, ...actualizado } : p)));
       setFacturando(null);
       toast('Factura emitida ✓');
@@ -732,9 +705,15 @@ export default function Presupuestos() {
                 {ajustePct !== 0 && (
                   <div className={`resumen-linea ${ajustePct < 0 ? 'descuento' : ''}`}>
                     <span>
-                      {esTecnico ? 'Cliente técnico' : 'Público'} · {metodoPago.replace(/_/g, ' ')} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
+                      {esTecnico ? 'Cliente técnico' : 'Público'} · {labelMetodo(metodoPago)} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
                     </span>
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
+                  </div>
+                )}
+                {comisionPct > 0 && (
+                  <div className="resumen-linea">
+                    <span>Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} (MP {String(Math.round(comisionPct * 100) / 100).replace('.', ',')}% + IVA = {String(comisionConIvaPct).replace('.', ',')}%)</span>
+                    <span>+{formatoMoneda(recargoComision)}</span>
                   </div>
                 )}
                 <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
@@ -774,9 +753,14 @@ export default function Presupuestos() {
             </div>
             <div className="panel" style={{ marginTop: 16 }}>
               <h2>Forma de pago</h2>
-              <select value={metodoPago} onChange={(e) => setMetodoPago(e.target.value)} style={{ width: '100%' }}>
-                {metodosPago.map((m) => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
+              <select value={metodoPago} onChange={(e) => { setMetodoPago(e.target.value); setCuotas(1); }} style={{ width: '100%' }}>
+                {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
               </select>
+              {esMetodoCredito(metodoPago) && (
+                <select value={cuotas} onChange={(e) => setCuotas(Number(e.target.value))} style={{ width: '100%', marginTop: 8 }}>
+                  {opcionesCuotas(config).map((n) => <option key={n} value={n}>{n === 1 ? '1 pago' : `${n} cuotas sin interés`}</option>)}
+                </select>
+              )}
               <textarea placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} style={{ width: '100%', marginTop: 10, minHeight: 60 }} />
               {errorForm && <p className="login-error">{errorForm}</p>}
               <button
@@ -858,74 +842,13 @@ export default function Presupuestos() {
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.
                             </p>
-                            <select
-                              value={cliente.campos.condicion_fiscal}
-                              onChange={(e) => cliente.setCondicionFiscal(e.target.value)}
-                              style={{ width: '100%' }}
-                            >
-                              {CONDICIONES_FISCALES.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-
-                            {cliente.campos.condicion_fiscal === 'Consumidor Final' ? (
-                              <p className="muted" style={{ marginBottom: 0 }}>
-                                Consumidor Final no necesita ningún dato del cliente -- se factura así, sin nombre ni documento.
-                              </p>
-                            ) : (
-                              <>
-                                <p className="muted" style={{ marginBottom: 10 }}>
-                                  Esta condición necesita el CUIT o CUIL del cliente. Cargalo y se autocompleta el nombre y domicilio desde AFIP (podés corregirlos si no hubo match).
-                                </p>
-                                <div className="form-row">
-                                  <select
-                                    value={cliente.campos.tipo_documento}
-                                    onChange={(e) => cliente.setTipoDocumento(e.target.value)}
-                                  >
-                                    {['CUIT', 'CUIL'].map((t) => <option key={t} value={t}>{t}</option>)}
-                                  </select>
-                                  <input
-                                    placeholder="Número de CUIT/CUIL"
-                                    value={cliente.campos.documento}
-                                    onChange={(e) => cliente.setDocumento(e.target.value)}
-                                  />
-                                  {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
-                                    <button type="button" onClick={() => cliente.buscarEnPadron()} className="btn-secondary">
-                                      Reintentar
-                                    </button>
-                                  )}
-                                </div>
-                                {cliente.estado === ESTADO_CLIENTE_FACTURA.SEARCHING && (
-                                  <p className="muted" style={{ marginTop: 4 }}>Buscando en el padrón de AFIP...</p>
-                                )}
-                                {cliente.estado === ESTADO_CLIENTE_FACTURA.NOT_FOUND_OR_ERROR && (
-                                  <p className="login-error" style={{ marginTop: 4 }}>
-                                    {cliente.errorPadron || 'AFIP no tiene datos para ese documento.'} Completá los datos a mano para poder facturar.
-                                  </p>
-                                )}
-                                <input
-                                  placeholder="Nombre y apellido / Razón social"
-                                  value={cliente.campos.nombre}
-                                  disabled={cliente.nombreBloqueado}
-                                  onChange={(e) => cliente.setNombreManual(e.target.value)}
-                                  style={{ width: '100%', marginTop: 8 }}
-                                />
-                                <input
-                                  placeholder="Domicilio"
-                                  value={cliente.campos.direccion}
-                                  disabled={cliente.domicilioBloqueado}
-                                  onChange={(e) => cliente.setDireccionManual(e.target.value)}
-                                  style={{ width: '100%', marginTop: 8 }}
-                                />
-                                {cliente.errorValidacion && (
-                                  <p className="login-error" style={{ marginTop: 4 }}>{cliente.errorValidacion}</p>
-                                )}
-                              </>
-                            )}
+                            <FacturacionForm clienteId={facturandoClienteId} onChange={setFacturacionForm} compacto />
                             {errorFactura && <p className="login-error">{errorFactura}</p>}
                             <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                               <button
                                 type="button"
                                 onClick={() => emitirFactura(p.id)}
-                                disabled={emitiendo || !cliente.puedeEmitir}
+                                disabled={emitiendo || !facturacionForm.valido}
                                 className="btn-danger"
                               >
                                 {emitiendo ? 'Emitiendo...' : 'Confirmar y emitir factura real'}
