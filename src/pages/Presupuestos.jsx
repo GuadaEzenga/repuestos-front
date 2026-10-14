@@ -8,7 +8,7 @@ import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcione
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(valor || 0);
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
 }
 
 // Evita mostrar cosas como 0.30000000000000004 por errores de redondeo de

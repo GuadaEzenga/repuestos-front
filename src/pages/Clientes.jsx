@@ -10,7 +10,7 @@ const CLIENTE_VACIO = { nombre: '', nombre_negocio: '', telefono: '', email: '',
 const DATO_VACIO = { condicion_fiscal: 'Responsable Inscripto', tipo_documento: 'CUIT', documento: '', razon_social: '', direccion: '' };
 
 function formatoMoneda(valor) {
-  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(valor || 0);
+  return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
 }
 
 function nombreCompleto(c) {

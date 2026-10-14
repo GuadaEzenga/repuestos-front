@@ -104,15 +104,21 @@ export function calcularTotalVenta({ subtotal, metodo, esTecnico, config, cuotas
   const costoCuotasPct = esMetodoCredito(metodo) && Number(cuotas) > 1 ? Number(costosCuotas[cuotas] || 0) : 0;
   const comisionPct = Number(comisiones[metodo] || 0) + costoCuotasPct;
   const impuestoPct = metodoPagaImpuesto(metodo) ? impuestoCobrosDesdeConfig(config) : 0;
-  const unidad = Number(config?.redondeo_unidad || 10);
+  // Redondeo del total solo en efectivo; el resto queda exacto al centavo.
+  const unidad = metodo === 'efectivo' ? Number(config?.redondeo_unidad || 10) : 0.01;
   const conAjuste = subtotal * (1 + ajustePct / 100);
   const efectiva = (comisionPct * IVA_COMISION) / 100 + impuestoPct / 100;
   const bruto = conAjuste / (1 - (efectiva < 1 ? efectiva : 0));
   // Con recargo se redondea para arriba (igual que el backend).
-  const total = efectiva > 0 ? Math.ceil(Math.round(bruto * 100) / 100 / unidad) * unidad : redondear(bruto, unidad);
+  const total = efectiva > 0
+    ? Math.round(Math.ceil(Math.round(bruto * 10000) / 10000 / unidad) * unidad * 100) / 100
+    : Math.round(redondear(bruto, unidad) * 100) / 100;
+  // Sin recargo, el redondeo va dentro del descuento/ajuste (nunca se
+  // muestra aparte).
+  const montoAjuste = efectiva > 0 ? conAjuste - subtotal : total - subtotal;
   return {
     ajustePct,
-    montoAjuste: conAjuste - subtotal,
+    montoAjuste,
     comisionPct,
     costoCuotasPct,
     impuestoPct,
