@@ -37,6 +37,22 @@ export const DEFAULT_COSTOS_CUOTAS = { 2: 7.79, 3: 10.49, 6: 18.69, 9: 26.49, 12
 export const CUOTAS_POSIBLES = [1, 2, 3, 6, 9, 12, 18];
 export const DEFAULT_CUOTAS_MAX = 3;
 
+// Impuesto sobre los creditos y debitos (0,6%), se traslada solo en cobros
+// con Point y QR. Ver backend/utils/pagos.js.
+export const DEFAULT_IMPUESTO_COBROS = 0.6;
+
+// Efectivo y transferencias (a la cuenta de MP) no pagan este impuesto.
+export function metodoPagaImpuesto(metodo) {
+  return metodo !== 'efectivo' && metodo !== 'transferencia';
+}
+
+export function impuestoCobrosDesdeConfig(config) {
+  const v = config?.impuesto_cobros_pct;
+  if (v == null || String(v).trim() === '') return DEFAULT_IMPUESTO_COBROS;
+  const n = Number(String(v).replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 && n < 20 ? n : DEFAULT_IMPUESTO_COBROS;
+}
+
 export function cuotasMaxDesdeConfig(config) {
   const n = Number(config?.cuotas_sin_interes_max);
   return CUOTAS_POSIBLES.includes(n) ? n : DEFAULT_CUOTAS_MAX;
@@ -87,17 +103,32 @@ export function calcularTotalVenta({ subtotal, metodo, esTecnico, config, cuotas
   const ajustePct = Number((esTecnico ? tecnico : publico)[metodo] || 0);
   const costoCuotasPct = esMetodoCredito(metodo) && Number(cuotas) > 1 ? Number(costosCuotas[cuotas] || 0) : 0;
   const comisionPct = Number(comisiones[metodo] || 0) + costoCuotasPct;
+  const impuestoPct = metodoPagaImpuesto(metodo) ? impuestoCobrosDesdeConfig(config) : 0;
   const unidad = Number(config?.redondeo_unidad || 10);
   const conAjuste = subtotal * (1 + ajustePct / 100);
-  const efectiva = (comisionPct * IVA_COMISION) / 100;
-  const total = redondear(conAjuste / (1 - (efectiva < 1 ? efectiva : 0)), unidad);
+  const efectiva = (comisionPct * IVA_COMISION) / 100 + impuestoPct / 100;
+  const bruto = conAjuste / (1 - (efectiva < 1 ? efectiva : 0));
+  // Con recargo se redondea para arriba (igual que el backend).
+  const total = efectiva > 0 ? Math.ceil(Math.round(bruto * 100) / 100 / unidad) * unidad : redondear(bruto, unidad);
   return {
     ajustePct,
     montoAjuste: conAjuste - subtotal,
     comisionPct,
     costoCuotasPct,
-    comisionConIvaPct: Math.round(comisionPct * IVA_COMISION * 100) / 100,
+    impuestoPct,
+    // % total que se descuenta del cobro (MP + IVA + impuesto a los creditos)
+    comisionConIvaPct: Math.round((comisionPct * IVA_COMISION + impuestoPct) * 100) / 100,
     recargoComision: total - conAjuste,
     total,
   };
+}
+
+// Texto corto del recargo para el resumen de la venta, ej.
+// "MP 4,4% + IVA + imp. créditos 0,6% = 5,92%".
+export function detalleRecargo({ comisionPct, impuestoPct, comisionConIvaPct }) {
+  const fmt = (n) => String(Math.round(n * 100) / 100).replace('.', ',');
+  const partes = [];
+  if (comisionPct > 0) partes.push(`MP ${fmt(comisionPct)}% + IVA`);
+  if (impuestoPct > 0) partes.push(`imp. créditos ${fmt(impuestoPct)}%`);
+  return partes.length > 1 || comisionPct > 0 ? `${partes.join(' + ')} = ${fmt(comisionConIvaPct)}%` : partes.join('');
 }

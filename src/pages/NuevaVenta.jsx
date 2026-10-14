@@ -4,7 +4,7 @@ import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
-import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, detalleRecargo } from '../utils/pagos';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(valor || 0);
@@ -363,7 +363,7 @@ export default function NuevaVenta() {
   const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
   const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
-  const { ajustePct, montoAjuste, comisionPct, comisionConIvaPct, recargoComision } = calculo;
+  const { ajustePct, montoAjuste, comisionPct, impuestoPct, recargoComision } = calculo;
   const totalEstimado = calculo.total;
   // Total que realmente se va a cobrar: el manual si se cargó, sino el estimado.
   const totalAcobrar = parseNumero(totalManual) ?? totalEstimado;
@@ -768,10 +768,10 @@ export default function NuevaVenta() {
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
                 )}
-                {comisionPct > 0 && (
+                {(comisionPct > 0 || impuestoPct > 0) && (
                   <div className="resumen-linea">
                     <span>
-                      Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} (MP {String(Math.round(comisionPct * 100) / 100).replace('.', ',')}% + IVA = {String(comisionConIvaPct).replace('.', ',')}%)
+                      Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} ({detalleRecargo(calculo)})
                     </span>
                     <span>+{formatoMoneda(recargoComision)}</span>
                   </div>

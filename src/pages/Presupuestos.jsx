@@ -4,7 +4,7 @@ import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
-import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, detalleRecargo } from '../utils/pagos';
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
@@ -386,7 +386,7 @@ export default function Presupuestos() {
   // real), pero lo que se veia en pantalla antes de guardar no reflejaba el
   // descuento.
   const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
-  const { ajustePct, montoAjuste, comisionPct, comisionConIvaPct, recargoComision } = calculo;
+  const { ajustePct, montoAjuste, comisionPct, impuestoPct, recargoComision } = calculo;
   const totalEstimado = calculo.total;
 
   function buscarClientes(texto) {
@@ -749,9 +749,9 @@ export default function Presupuestos() {
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
                 )}
-                {comisionPct > 0 && (
+                {(comisionPct > 0 || impuestoPct > 0) && (
                   <div className="resumen-linea">
-                    <span>Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} (MP {String(Math.round(comisionPct * 100) / 100).replace('.', ',')}% + IVA = {String(comisionConIvaPct).replace('.', ',')}%)</span>
+                    <span>Recargo {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} ({detalleRecargo(calculo)})</span>
                     <span>+{formatoMoneda(recargoComision)}</span>
                   </div>
                 )}

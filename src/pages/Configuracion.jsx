@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useUi } from '../context/UiContext';
-import { CUOTAS_POSIBLES, METODOS_PAGO, IVA_COMISION, cuotasMaxDesdeConfig, tablasDesdeConfig } from '../utils/pagos';
+import { CUOTAS_POSIBLES, METODOS_PAGO, IVA_COMISION, cuotasMaxDesdeConfig, impuestoCobrosDesdeConfig, metodoPagaImpuesto, tablasDesdeConfig } from '../utils/pagos';
 
 // Claves conocidas, con su etiqueta y en que grupo van. El resto de las
 // claves que existan en config (o que se agreguen) aparecen abajo, en
@@ -65,6 +65,7 @@ const CLAVES_CONOCIDAS = new Set(
     'comisiones_metodo_pago',
     'costos_cuotas_sin_interes',
     'cuotas_sin_interes_max',
+    'impuesto_cobros_pct',
     'cotizacion_dolar_actualizada_en',
     'migracion_clientes_facturacion_v1',
   ])
@@ -337,8 +338,9 @@ export default function Configuracion() {
                   const fila = tablaPagos[m.clave] || {};
                   const usaMp = m.clave !== 'efectivo' && m.clave !== 'transferencia';
                   const com = Number(String(fila.comision || '0').replace(',', '.')) || 0;
-                  const efectiva = (com * IVA_COMISION) / 100;
-                  const recargoReal = usaMp && com > 0 && efectiva < 1 ? ((1 / (1 - efectiva) - 1) * 100).toFixed(2).replace('.', ',') : null;
+                  const imp = metodoPagaImpuesto(m.clave) ? impuestoCobrosDesdeConfig(valores) : 0;
+                  const efectiva = ((usaMp ? com : 0) * IVA_COMISION) / 100 + imp / 100;
+                  const recargoReal = efectiva > 0 && efectiva < 1 ? ((1 / (1 - efectiva) - 1) * 100).toFixed(2).replace('.', ',') : null;
                   return (
                     <tr key={m.clave}>
                       <td>{m.label}</td>
@@ -355,6 +357,17 @@ export default function Configuracion() {
                 })}
               </tbody>
             </table>
+
+            <label className="campo" style={{ maxWidth: 420, marginTop: 14 }}>
+              <span>Impuesto sobre los créditos y débitos (%) — se suma solo en cobros con Point y QR (no en efectivo ni transferencia). Poné 0 para no trasladarlo.</span>
+              <input
+                inputMode="decimal"
+                value={valores.impuesto_cobros_pct ?? ''}
+                placeholder="0,6"
+                onChange={(e) => cambiarValor('impuesto_cobros_pct', e.target.value)}
+                style={{ width: 100 }}
+              />
+            </label>
 
             <h3 style={{ margin: '18px 0 6px', fontSize: 14 }}>Cuotas sin interés (Point y QR con crédito)</h3>
             <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
