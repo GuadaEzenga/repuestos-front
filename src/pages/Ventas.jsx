@@ -154,9 +154,9 @@ export default function Ventas() {
     }
   }
 
-  // Efectivo sin factura es valido (la factura es opcional); solo se marca
-  // como pendiente si no es efectivo o si un intento de facturar fallo.
-  const esPendiente = (v) => !v.afip_cae && (v.metodo_pago !== 'efectivo' || !!v.factura_error);
+  // "Sin factura" elegido a proposito (o efectivo de antes) es valido; solo
+  // es pendiente si fallo un intento de facturar o no se eligio no facturar.
+  const esPendiente = (v) => !v.afip_cae && (!!v.factura_error || (!v.sin_factura && v.metodo_pago !== 'efectivo'));
 
   const totalPaginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -194,7 +194,7 @@ export default function Ventas() {
                           ? <span style={{ color: 'var(--success)' }}>Facturada</span>
                           : esPendiente(v)
                             ? <span style={{ color: 'var(--danger, #dc2626)', fontWeight: 600 }} title={v.factura_error || ''}>Pendiente de facturar</span>
-                            : <span className="muted">Sin factura (efectivo)</span>}
+                            : <span className="muted">Sin factura</span>}
                       </td>
                       <td className="celda-acciones">
                         <button type="button" className="btn-link" onClick={() => toggleDetalle(v.id)}>

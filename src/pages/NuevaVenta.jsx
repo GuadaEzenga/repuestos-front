@@ -39,6 +39,7 @@ export default function NuevaVenta() {
   const [buscadorEnfocado, setBuscadorEnfocado] = useState(false);
   const [clienteBuscadorEnfocado, setClienteBuscadorEnfocado] = useState(false);
   const [presupuestoCargado, setPresupuestoCargado] = useState(null); // numero del presupuesto que se cargo al carrito, si vino de ahi
+  const [presupuestoYaFacturado, setPresupuestoYaFacturado] = useState(false);
   // Lineas del carrito: producto suelto {kind:'producto', id, codigo, descripcion, cantidad, precioEstimado, descuentoPct}
   // o grupo/kit como UNA sola linea escalable {kind:'grupo', id, descripcion, cantidad, precioEstimado, descuentoPct, componentes:[{producto_id,descripcion,cantidadPorGrupo,precioEstimado}]}
   const [carrito, setCarrito] = useState([]);
@@ -249,6 +250,7 @@ export default function NuevaVenta() {
     }));
     setCarrito((prev) => [...prev, ...lineasNuevas]);
     setPresupuestoCargado(detalle.numero);
+    setPresupuestoYaFacturado(!!detalle.afip_cae);
     if (detalle.cliente_id) {
       const cliente = clientesTodos.find((c) => String(c.id) === String(detalle.cliente_id));
       if (cliente) setClienteSeleccionado(cliente);
@@ -461,6 +463,8 @@ export default function NuevaVenta() {
     setBusquedaCliente('');
     setMetodoPago('efectivo');
     setCuotas(1);
+    setPresupuestoCargado(null);
+    setPresupuestoYaFacturado(false);
     setMontoRecibido('');
     setNotas('');
     setTotalManual('');
@@ -533,7 +537,7 @@ export default function NuevaVenta() {
   if (ventaCreada) {
     const facturada = !!ventaCreada.afip_cae;
     // Efectivo sin factura a proposito (no es un error de AFIP).
-    const sinFacturaElegido = !facturada && !ventaCreada.factura_error && ventaCreada.metodo_pago === 'efectivo';
+    const sinFacturaElegido = !facturada && !ventaCreada.factura_error && (ventaCreada.sin_factura || ventaCreada.metodo_pago === 'efectivo');
     return (
       <div className="page">
         <div className="comprobante-pantalla">
@@ -887,7 +891,10 @@ export default function NuevaVenta() {
               style={{ width: '100%', marginTop: 10, minHeight: 60 }}
             />
             <h2 style={{ marginTop: 16 }}>Facturar</h2>
-            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto permitirNoFacturar={metodoPago === 'efectivo'} config={config} />
+            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto={metodoPago === 'efectivo' || presupuestoYaFacturado} config={config} />
+            {presupuestoYaFacturado && (
+              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>El presupuesto #{presupuestoCargado} ya está facturado: por eso arranca en "No facturar".</p>
+            )}
             {errorVenta && <p className="login-error">{errorVenta}</p>}
             <button
               type="button"

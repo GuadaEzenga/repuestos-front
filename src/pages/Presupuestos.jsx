@@ -75,6 +75,9 @@ export default function Presupuestos() {
   const [errorForm, setErrorForm] = useState(null);
   const [presupuestoCreado, setPresupuestoCreado] = useState(null);
   const [pdfUrl, setPdfUrl] = useState(null);
+  // Vista previa sin guardar (boton "Ver").
+  const [vistaPreviaUrl, setVistaPreviaUrl] = useState(null);
+  const [generandoVista, setGenerandoVista] = useState(false);
   const [cargandoPdf, setCargandoPdf] = useState(false);
   // Menu "⋯" por fila del historial con el resto de las acciones (antes
   // estaban todas sueltas en fila y en celular se cortaban a la mitad).
@@ -456,19 +459,51 @@ export default function Presupuestos() {
     };
   }, [presupuestoCreado]);
 
+  function armarBody() {
+    return {
+      cliente_id: clienteSeleccionado?.id || null,
+      items: itemsParaEnviar(),
+      metodo_pago: metodoPago,
+      cuotas: esMetodoCredito(metodoPago) ? cuotas : null,
+      notas: notas || null,
+      titulo: titulo.trim() || null,
+    };
+  }
+
+  // "Ver": muestra el PDF sin guardar nada.
+  async function verVistaPrevia() {
+    if (carrito.length === 0) return;
+    setGenerandoVista(true);
+    setErrorForm(null);
+    try {
+      const blob = await api.post('/presupuestos/vista-previa', armarBody());
+      setVistaPreviaUrl(URL.createObjectURL(blob));
+    } catch (err) {
+      setErrorForm(err.message);
+    } finally {
+      setGenerandoVista(false);
+    }
+  }
+
+  function cerrarVistaPrevia() {
+    if (vistaPreviaUrl) URL.revokeObjectURL(vistaPreviaUrl);
+    setVistaPreviaUrl(null);
+  }
+
+  // "Cancelar": descarta el presupuesto en curso sin guardarlo.
+  function cancelarPresupuesto() {
+    cerrarVistaPrevia();
+    setMostrarForm(false);
+    setEditandoId(null);
+  }
+
   async function guardarPresupuesto() {
     if (carrito.length === 0) return;
+    cerrarVistaPrevia();
     setGuardando(true);
     setErrorForm(null);
     try {
-      const body = {
-        cliente_id: clienteSeleccionado?.id || null,
-        items: itemsParaEnviar(),
-        metodo_pago: metodoPago,
-        cuotas: esMetodoCredito(metodoPago) ? cuotas : null,
-        notas: notas || null,
-        titulo: titulo.trim() || null,
-      };
+      const body = armarBody();
       const creado = editandoId
         ? await api.put(`/presupuestos/${editandoId}`, body)
         : await api.post('/presupuestos', body);
@@ -820,6 +855,39 @@ export default function Presupuestos() {
               >
                 {guardando ? 'Guardando...' : (editandoId ? 'Guardar cambios' : 'Guardar presupuesto')}
               </button>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={verVistaPrevia} disabled={carrito.length === 0 || generandoVista}>
+                  {generandoVista ? 'Generando...' : 'Ver'}
+                </button>
+                <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={cancelarPresupuesto}>
+                  Cancelar
+                </button>
+              </div>
+
+              {vistaPreviaUrl && (
+                <div
+                  style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+                  onClick={cerrarVistaPrevia}
+                >
+                  <div
+                    className="panel"
+                    style={{ width: 'min(900px, 100%)', height: 'min(92vh, 1100px)', display: 'flex', flexDirection: 'column', gap: 10 }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <strong>Vista previa (todavía no está guardado)</strong>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button type="button" className="btn-primary" onClick={guardarPresupuesto} disabled={guardando}>
+                          {guardando ? 'Guardando...' : (editandoId ? 'Guardar cambios' : 'Guardar')}
+                        </button>
+                        <button type="button" className="btn-secondary" onClick={cerrarVistaPrevia}>Seguir editando</button>
+                        <button type="button" className="btn-secondary" onClick={cancelarPresupuesto}>Cancelar</button>
+                      </div>
+                    </div>
+                    <iframe title="Vista previa del presupuesto" src={vistaPreviaUrl} style={{ flex: 1, width: '100%', border: '1px solid var(--border)', borderRadius: 8 }} />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

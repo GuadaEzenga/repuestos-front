@@ -22,10 +22,10 @@ export function resumenDatoFacturacion(d) {
 //
 // onChange recibe { facturacion, valido, error } cada vez que algo cambia;
 // facturacion es lo que hay que mandar al backend.
-// permitirNoFacturar: solo en ventas en EFECTIVO, donde la factura es
-// opcional (solo si el cliente la pide). En ese caso aparece un tercer
-// boton "No facturar", que arranca seleccionado.
-export default function FacturacionForm({ clienteId = null, onChange, compacto = false, permitirNoFacturar = false, config = null }) {
+// mostrarNoFacturar: agrega el boton "No facturar" (ventas). Arranca
+// seleccionado si noFacturarPorDefecto (efectivo, o venta de un presupuesto
+// ya facturado).
+export default function FacturacionForm({ clienteId = null, onChange, compacto = false, mostrarNoFacturar = false, noFacturarPorDefecto = false, config = null }) {
   const CAMPOS_VACIOS = { condicion_fiscal: 'Consumidor Final', tipo_documento: 'DNI', documento: '', nombre: '', direccion: '' };
   const [campos, setCampos] = useState(CAMPOS_VACIOS);
   const form = {
@@ -37,10 +37,9 @@ export default function FacturacionForm({ clienteId = null, onChange, compacto =
     setDireccionManual: (direccion) => setCampos((x) => ({ ...x, direccion })),
   };
   const [modo, setModo] = useState('mi');
-  const [noFacturar, setNoFacturar] = useState(permitirNoFacturar);
-  // Cada vez que la venta pasa a efectivo, arranca en "No facturar".
-  useEffect(() => { setNoFacturar(permitirNoFacturar); }, [permitirNoFacturar]);
-  const sinFactura = permitirNoFacturar && noFacturar;
+  const [noFacturar, setNoFacturar] = useState(noFacturarPorDefecto);
+  useEffect(() => { setNoFacturar(noFacturarPorDefecto); }, [noFacturarPorDefecto]);
+  const sinFactura = mostrarNoFacturar && noFacturar;
   const [datosGuardados, setDatosGuardados] = useState([]);
   const [datoId, setDatoId] = useState('');
   const [cargando, setCargando] = useState(false);
@@ -137,7 +136,7 @@ export default function FacturacionForm({ clienteId = null, onChange, compacto =
   return (
     <div className={compacto ? '' : 'factura-box'}>
       <div style={{ display: 'flex', gap: 8 }}>
-        {permitirNoFacturar && (
+        {mostrarNoFacturar && (
           <button type="button" className={sinFactura ? 'btn-primary' : 'btn-secondary'} style={{ flex: 1 }} onClick={() => setNoFacturar(true)}>
             No facturar
           </button>
@@ -151,7 +150,7 @@ export default function FacturacionForm({ clienteId = null, onChange, compacto =
       </div>
 
       {sinFactura && (
-        <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>Venta en efectivo sin factura (se puede facturar después desde Ventas si el cliente la pide).</p>
+        <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>Venta sin factura (se puede facturar después desde Ventas si hace falta).</p>
       )}
 
       {!sinFactura && modo === 'mi' && (
