@@ -896,7 +896,9 @@ export default function NuevaVenta() {
               className="btn-primary"
               style={{ width: '100%', marginTop: 14, padding: 12 }}
             >
-              {guardando ? 'Guardando y facturando...' : 'Confirmar venta y facturar'}
+              {facturacionVenta.facturacion?.modo === 'no'
+                ? (guardando ? 'Guardando...' : 'Confirmar venta (sin factura)')
+                : (guardando ? 'Guardando y facturando...' : 'Confirmar venta y facturar')}
             </button>
           </div>
         </div>
