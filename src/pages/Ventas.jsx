@@ -157,18 +157,12 @@ export default function Ventas() {
   // Efectivo sin factura es valido (la factura es opcional); solo se marca
   // como pendiente si no es efectivo o si un intento de facturar fallo.
   const esPendiente = (v) => !v.afip_cae && (v.metodo_pago !== 'efectivo' || !!v.factura_error);
-  const pendientes = ventas.filter(esPendiente).length;
 
   const totalPaginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="page">
       <h1>Ventas</h1>
-      {pendientes > 0 && (
-        <div className="error-box">
-          Hay {pendientes} venta{pendientes === 1 ? '' : 's'} pendiente{pendientes === 1 ? '' : 's'} de facturar en esta página (las que no son en efectivo tienen que facturarse): usá "⋯ → Facturar".
-        </div>
-      )}
 
       {error && <div className="error-box">{error}</div>}
 

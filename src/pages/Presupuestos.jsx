@@ -67,6 +67,10 @@ export default function Presupuestos() {
   const [metodoPago, setMetodoPago] = useState('efectivo');
   const [cuotas, setCuotas] = useState(1);
   const [notas, setNotas] = useState('');
+  const [titulo, setTitulo] = useState('');
+  // Seleccion multiple en el historial, para dar de baja varios a la vez.
+  const [seleccionados, setSeleccionados] = useState(new Set());
+  const [eliminandoLote, setEliminandoLote] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [errorForm, setErrorForm] = useState(null);
   const [presupuestoCreado, setPresupuestoCreado] = useState(null);
@@ -133,6 +137,7 @@ export default function Presupuestos() {
     setClienteSeleccionado(null);
     setBusquedaCliente('');
     setNotas('');
+    setTitulo('');
     setMetodoPago('efectivo');
     setCuotas(1);
     setErrorForm(null);
@@ -164,6 +169,7 @@ export default function Presupuestos() {
     }
     setBusquedaCliente('');
     setNotas(p.notas || '');
+    setTitulo(p.titulo || '');
     setMetodoPago(p.metodo_pago || 'efectivo');
     setCuotas(p.cuotas || 1);
     setErrorForm(null);
@@ -461,6 +467,7 @@ export default function Presupuestos() {
         metodo_pago: metodoPago,
         cuotas: esMetodoCredito(metodoPago) ? cuotas : null,
         notas: notas || null,
+        titulo: titulo.trim() || null,
       };
       const creado = editandoId
         ? await api.put(`/presupuestos/${editandoId}`, body)
@@ -482,8 +489,40 @@ export default function Presupuestos() {
   }
 
   function cambiarPagina(p) {
+    setSeleccionados(new Set());
     setPage(p);
     cargarHistorial(p);
+  }
+
+  function toggleSeleccion(id) {
+    setSeleccionados((prev) => {
+      const nuevo = new Set(prev);
+      if (nuevo.has(id)) nuevo.delete(id); else nuevo.add(id);
+      return nuevo;
+    });
+  }
+
+  const todosSeleccionados = presupuestos.length > 0 && presupuestos.every((p) => seleccionados.has(p.id));
+  function toggleTodos() {
+    setSeleccionados(todosSeleccionados ? new Set() : new Set(presupuestos.map((p) => p.id)));
+  }
+
+  async function eliminarSeleccionados() {
+    const ids = [...seleccionados];
+    if (ids.length === 0) return;
+    const ok = await confirm(`¿Dar de baja ${ids.length} presupuesto${ids.length === 1 ? '' : 's'}?`, { danger: true, confirmLabel: 'Dar de baja' });
+    if (!ok) return;
+    setEliminandoLote(true);
+    try {
+      const r = await api.post('/presupuestos/eliminar', { ids });
+      setSeleccionados(new Set());
+      toast(`${r.eliminados} presupuesto${r.eliminados === 1 ? '' : 's'} dado${r.eliminados === 1 ? '' : 's'} de baja ✓`);
+      cargarHistorial(page);
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 5000 });
+    } finally {
+      setEliminandoLote(false);
+    }
   }
 
   async function eliminarPresupuesto(id) {
@@ -722,6 +761,15 @@ export default function Presupuestos() {
           </div>
 
           <div>
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <h2>Descripción</h2>
+              <input
+                placeholder="Ej: GASES EN LATA (para encontrarlo fácil después)"
+                value={titulo}
+                onChange={(e) => setTitulo(e.target.value.toUpperCase())}
+                style={{ width: '100%' }}
+              />
+            </div>
             <div className="panel">
               <h2>Cliente</h2>
               {clienteSeleccionado ? (
@@ -778,23 +826,35 @@ export default function Presupuestos() {
       )}
 
       <div className="panel">
-        <h2>Historial</h2>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <h2 style={{ margin: 0 }}>Historial</h2>
+          {seleccionados.size > 0 && (
+            <button type="button" className="btn-danger" onClick={eliminarSeleccionados} disabled={eliminandoLote}>
+              {eliminandoLote ? 'Eliminando...' : `Eliminar ${seleccionados.size} seleccionado${seleccionados.size === 1 ? '' : 's'}`}
+            </button>
+          )}
+        </div>
         {loading ? (
           <div className="loading">Cargando...</div>
         ) : (
           <>
             <table className="simple-table">
               <thead>
-                <tr><th>N°</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Estado</th><th /></tr>
+                <tr>
+                  <th><input type="checkbox" checked={todosSeleccionados} onChange={toggleTodos} title="Seleccionar todos" /></th>
+                  <th>N°</th><th>Descripción</th><th>Fecha</th><th>Cliente</th><th>Total</th><th>Estado</th><th />
+                </tr>
               </thead>
               <tbody>
                 {presupuestos.length === 0 && (
-                  <tr><td colSpan={6} className="muted">Sin presupuestos registrados</td></tr>
+                  <tr><td colSpan={8} className="muted">Sin presupuestos registrados</td></tr>
                 )}
                 {presupuestos.map((p) => (
                   <>
                     <tr key={p.id}>
+                      <td><input type="checkbox" checked={seleccionados.has(p.id)} onChange={() => toggleSeleccion(p.id)} /></td>
                       <td>{p.numero}</td>
+                      <td>{p.titulo || <span className="muted">SIN DESCRIPCIÓN</span>}</td>
                       <td>{String(p.fecha).slice(0, 10)}</td>
                       <td>{p.cliente_nombre ? `${p.cliente_nombre} ${p.cliente_apellido || ''}` : 'Sin cliente'}</td>
                       <td>{formatoMoneda(p.total)}</td>
@@ -837,7 +897,7 @@ export default function Presupuestos() {
 
                     {facturando === p.id && (
                       <tr key={`${p.id}-facturar`}>
-                        <td colSpan={6}>
+                        <td colSpan={8}>
                           <div className="factura-box">
                             <p className="muted" style={{ marginTop: 0 }}>
                               Esto emite una factura real ante AFIP con el certificado de producción. No se puede deshacer.

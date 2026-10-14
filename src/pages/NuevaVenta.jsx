@@ -609,7 +609,7 @@ export default function NuevaVenta() {
                   <option value="">Cargar desde un presupuesto...</option>
                   {presupuestos.map((p) => (
                     <option key={p.id} value={p.id}>
-                      #{p.numero} — {[p.cliente_nombre, p.cliente_apellido].filter(Boolean).join(' ') || 'Sin cliente'} ({String(p.fecha).slice(0, 10)})
+                      #{p.numero} - {p.titulo || 'SIN DESCRIPCIÓN'} ({String(p.fecha).slice(0, 10)})
                     </option>
                   ))}
                 </select>
