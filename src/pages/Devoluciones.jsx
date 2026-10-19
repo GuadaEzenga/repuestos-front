@@ -183,7 +183,7 @@ export default function Devoluciones() {
     let montoDiferencia;
     if (tipo === 'cambio') {
       if (!productoNuevo || cantidadNuevaNum == null || cantidadNuevaNum <= 0) return null;
-      const precioOriginalNuevo = Number(productoNuevo.precio || 0);
+      const precioOriginalNuevo = Number(productoNuevo.precio_lista ?? productoNuevo.precio ?? 0);
       const montoNuevo = precioOriginalNuevo * factor * cantidadNuevaNum;
       montoDiferencia = redondear(montoNuevo - montoDevuelto, unidadRedondeo);
     } else {

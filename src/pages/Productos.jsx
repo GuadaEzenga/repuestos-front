@@ -1326,7 +1326,14 @@ export default function Productos() {
                       {p.precio == null ? (
                         <span className="muted">Sin costo/precio</span>
                       ) : (
-                        formatoMoneda(p.precio)
+                        <>
+                          {formatoMoneda(p.precio)}
+                          {p.precio_lista != null && (
+                            <div className="muted" style={{ fontSize: 11 }} title="Precio de lista (Point débito): el que se cobra en ventas antes del descuento/recargo de la forma de pago">
+                              Lista: {formatoMoneda(p.precio_lista)}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>

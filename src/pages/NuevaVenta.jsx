@@ -4,8 +4,7 @@ import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
-import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas } from '../utils/pagos';
-import RecargoLinea from '../components/RecargoLinea';
+import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
@@ -132,7 +131,7 @@ export default function NuevaVenta() {
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
-      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio, stock: p.stock }));
+      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock }));
     const grps = grupos
       .filter((g) => !hayQuery || coincideTexto(g.nombre, busqueda))
       .map((g) => ({ kind: 'grupo', id: g.id, descripcion: g.nombre, cantidad_productos: g.cantidad_productos }));
@@ -165,7 +164,7 @@ export default function NuevaVenta() {
         producto_id: comp.producto_id,
         descripcion: comp.descripcion,
         cantidadPorGrupo: Number(comp.cantidad),
-        precioEstimado: productosPorId[comp.producto_id]?.precio || 0,
+        precioEstimado: (productosPorId[comp.producto_id]?.precio_lista ?? productosPorId[comp.producto_id]?.precio) || 0,
       }));
       const precioPorGrupo = componentes.reduce((acc, c) => acc + c.precioEstimado * c.cantidadPorGrupo, 0);
       setCarrito((prev) => [...prev, { kind: 'grupo', id: item.id, descripcion: item.descripcion, cantidad: 1, precioEstimado: precioPorGrupo, descuentoPct: 0, componentes, modificado: false }]);
@@ -246,7 +245,7 @@ export default function NuevaVenta() {
       codigo: productosPorId[it.producto_id]?.codigo || '',
       descripcion: it.descripcion,
       cantidad: Number(it.cantidad),
-      precioEstimado: productosPorId[it.producto_id]?.precio ?? Number(it.precio_unitario),
+      precioEstimado: (productosPorId[it.producto_id]?.precio_lista ?? productosPorId[it.producto_id]?.precio) ?? Number(it.precio_unitario),
       descuentoPct: Number(it.ajuste_pct) || 0,
     }));
     setCarrito((prev) => [...prev, ...lineasNuevas]);
@@ -366,7 +365,7 @@ export default function NuevaVenta() {
   const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
   const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
-  const { ajustePct, montoAjuste, comisionPct, impuestoPct, recargoComision } = calculo;
+  const { ajustePct, montoAjuste } = calculo;
   const totalEstimado = calculo.total;
   // Total que realmente se va a cobrar: el manual si se cargó, sino el estimado.
   const totalAcobrar = parseNumero(totalManual) ?? totalEstimado;
@@ -768,13 +767,10 @@ export default function NuevaVenta() {
                 {ajustePct !== 0 && (
                   <div className={`resumen-linea ${ajustePct < 0 ? 'descuento' : ''}`}>
                     <span>
-                      {esTecnico ? 'Cliente técnico' : 'Público'} · {labelMetodo(metodoPago)} ({ajustePct > 0 ? '+' : ''}{ajustePct}%)
+                      {ajustePct < 0 ? 'Descuento' : 'Recargo'} {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` en ${cuotas} cuotas sin interés` : ''} ({formatoPct(ajustePct)}){esTecnico ? ' · técnico' : ''}
                     </span>
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
-                )}
-                {(comisionPct > 0 || impuestoPct > 0) && recargoComision > 0 && (
-                  <RecargoLinea metodo={metodoPago} cuotas={esMetodoCredito(metodoPago) ? cuotas : 1} calculo={calculo} formatoMoneda={formatoMoneda} />
                 )}
                 <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
                 <div style={{ marginTop: 10 }}>

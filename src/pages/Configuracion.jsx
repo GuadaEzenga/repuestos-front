@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
 import { useUi } from '../context/UiContext';
-import { CUOTAS_POSIBLES, METODOS_PAGO, IVA_COMISION, cuotasMaxDesdeConfig, impuestoCobrosDesdeConfig, metodoPagaImpuesto, tablasDesdeConfig } from '../utils/pagos';
+import {
+  CUOTAS_POSIBLES, METODOS_PAGO, comisionesDesdeConfig, costosCuotasDesdeConfig, cuotasMaxDesdeConfig, esMetodoCredito, formatoPct,
+  minimoSobreLista, porcentajesCuotasDesdeConfig, porcentajesDesdeConfig, recargoListaSugerido,
+} from '../utils/pagos';
 
 // Claves conocidas, con su etiqueta y en que grupo van. El resto de las
 // claves que existan en config (o que se agreguen) aparecen abajo, en
@@ -41,8 +44,6 @@ const GRUPOS = [
   {
     titulo: 'Precios',
     campos: [
-      { clave: 'cotizacion_dolar', label: 'Cotización del dólar (ARS)' },
-      { clave: 'cotizacion_piso', label: 'Piso de cotización (opcional)' },
       { clave: 'envio_pct', label: 'Envío general (%, opcional — se suma al costo antes del margen)' },
       { clave: 'iva_pct', label: 'IVA general (%, opcional — se suma al costo antes del margen)' },
       { clave: 'margen_venta_pct', label: 'Margen de venta general (%)' },
@@ -66,18 +67,42 @@ const CLAVES_CONOCIDAS = new Set(
     'costos_cuotas_sin_interes',
     'cuotas_sin_interes_max',
     'impuesto_cobros_pct',
+    'porcentajes_pago',
+    'porcentajes_cuotas',
+    'recargo_lista_pct',
+    'cotizacion_dolar',
+    'cotizacion_piso',
+    'cotizacion_modo',
     'cotizacion_dolar_actualizada_en',
+    'cotizacion_bna_referencia',
+    'cotizacion_bna_actualizada_en',
+    'cotizacion_bna_fecha',
     'migracion_clientes_facturacion_v1',
   ])
 );
+
+// "1.600" o "1.600,50" (formato argentino) -> "1600" / "1600.50". "1535.5" se deja igual.
+function normalizarNumero(valor) {
+  let t = String(valor ?? '').trim().replace(/[$\s]/g, '');
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+  return t;
+}
+
+function modoDolarDesdeConfig(config) {
+  const modo = String(config?.cotizacion_modo || '').trim();
+  if (['automatico', 'solo_sube', 'fijo'].includes(modo)) return modo;
+  return config?.cotizacion_piso ? 'solo_sube' : 'automatico';
+}
 
 export default function Configuracion() {
   const { toast } = useUi();
   const [config, setConfig] = useState(null);
   const [valores, setValores] = useState({});
   // Tabla de formas de pago: { [metodo]: { publico, tecnico, comision } } como texto editable.
+  // Formas de pago: { [metodo]: { publico, tecnico, comision } } como texto editable.
   const [tablaPagos, setTablaPagos] = useState({});
-  // Costo de cuotas sin interes: { [cuotas]: texto } y maximo ofrecido.
+  // Cuotas sin interes: { [n]: { pct, costo } } como texto editable.
   const [tablaCuotas, setTablaCuotas] = useState({});
   const [cuotasMax, setCuotasMax] = useState(3);
   const [loading, setLoading] = useState(true);
@@ -88,6 +113,7 @@ export default function Configuracion() {
   const [valorNuevo, setValorNuevo] = useState('');
 
   const [actualizandoCotizacion, setActualizandoCotizacion] = useState(false);
+  const [modoDolar, setModoDolar] = useState('automatico');
   const [probandoAfip, setProbandoAfip] = useState(false);
   const [resultadoAfip, setResultadoAfip] = useState(null);
 
@@ -107,6 +133,7 @@ export default function Configuracion() {
       setTablaPagos(armarTablaPagos(data));
       setTablaCuotas(armarTablaCuotas(data));
       setCuotasMax(cuotasMaxDesdeConfig(data));
+      setModoDolar(modoDolarDesdeConfig(data));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -116,59 +143,76 @@ export default function Configuracion() {
 
   useEffect(() => { cargar(); }, []);
 
+  const txt = (n) => (n == null ? '' : String(n).replace('.', ','));
+  const num = (t) => Number(String(t ?? '').trim().replace(',', '.'));
+
   function armarTablaPagos(data) {
-    const { publico, tecnico, comisiones } = tablasDesdeConfig(data);
+    const pct = porcentajesDesdeConfig(data);
+    const com = comisionesDesdeConfig(data);
     const t = {};
     for (const m of METODOS_PAGO) {
-      t[m.clave] = {
-        publico: publico[m.clave] != null ? String(publico[m.clave]).replace('.', ',') : '',
-        tecnico: tecnico[m.clave] != null ? String(tecnico[m.clave]).replace('.', ',') : '',
-        comision: comisiones[m.clave] != null ? String(comisiones[m.clave]).replace('.', ',') : '',
-      };
+      t[m.clave] = { publico: txt(pct.publico[m.clave]), tecnico: txt(pct.tecnico[m.clave]), comision: txt(com[m.clave]) };
     }
     return t;
   }
 
   function armarTablaCuotas(data) {
-    const { costosCuotas } = tablasDesdeConfig(data);
+    const pct = porcentajesCuotasDesdeConfig(data);
+    const costo = costosCuotasDesdeConfig(data);
     const t = {};
-    for (const n of CUOTAS_POSIBLES.filter((x) => x > 1)) t[n] = costosCuotas[n] != null ? String(costosCuotas[n]).replace('.', ',') : '';
+    for (const n of CUOTAS_POSIBLES.filter((x) => x > 1)) t[n] = { pct: txt(pct[n]), costo: txt(costo[n]) };
     return t;
   }
 
   function cambiarTablaPagos(metodo, columna, valor) {
     setTablaPagos((prev) => ({ ...prev, [metodo]: { ...prev[metodo], [columna]: valor } }));
   }
+  function cambiarTablaCuotas(n, columna, valor) {
+    setTablaCuotas((prev) => ({ ...prev, [n]: { ...prev[n], [columna]: valor } }));
+  }
 
-  // Pasa la tabla editable a los 3 JSON que lee el backend (solo guarda
-  // los metodos con un valor distinto de 0).
+  // Pasa las tablas editables a las claves de config que lee el backend.
   function serializarTablaPagos() {
-    const out = { publico: {}, tecnico: {}, comision: {} };
+    const publico = {};
+    const tecnico = {};
+    const comisiones = {};
     for (const m of METODOS_PAGO) {
-      for (const col of ['publico', 'tecnico', 'comision']) {
-        const txt = String(tablaPagos[m.clave]?.[col] ?? '').trim().replace(',', '.');
-        if (txt === '') continue;
-        const n = Number(txt);
-        if (Number.isNaN(n)) throw new Error(`Valor inválido en "${m.label}": ${tablaPagos[m.clave][col]}`);
-        if (col === 'comision' && (n < 0 || n >= 50)) throw new Error(`La comisión de "${m.label}" tiene que estar entre 0 y 50%`);
-        if (n !== 0) out[col][m.clave] = n;
+      const f = tablaPagos[m.clave] || {};
+      for (const [col, destino] of [['publico', publico], ['tecnico', tecnico], ['comision', comisiones]]) {
+        const v = String(f[col] ?? '').trim() === '' ? 0 : num(f[col]);
+        if (Number.isNaN(v)) throw new Error(`Valor inválido en "${m.label}": ${f[col]}`);
+        if (col !== 'comision' && (v < -50 || v > 200)) throw new Error(`El % de "${m.label}" tiene que estar entre -50 y 200`);
+        if (col === 'comision' && (v < 0 || v >= 50)) throw new Error(`La comisión de "${m.label}" tiene que estar entre 0 y 50%`);
+        destino[m.clave] = v;
       }
     }
-    const cuotasOut = {};
+    const pctCuotas = {};
+    const costoCuotas = {};
     for (const n of CUOTAS_POSIBLES.filter((x) => x > 1)) {
-      const txt = String(tablaCuotas[n] ?? '').trim().replace(',', '.');
-      if (txt === '') continue;
-      const v = Number(txt);
-      if (Number.isNaN(v) || v < 0 || v >= 80) throw new Error(`Costo inválido para ${n} cuotas: ${tablaCuotas[n]}`);
-      cuotasOut[n] = v;
+      const f = tablaCuotas[n] || {};
+      const p = num(f.pct);
+      const c = num(f.costo);
+      if (Number.isNaN(p) || Number.isNaN(c)) throw new Error(`Valor inválido en ${n} cuotas`);
+      pctCuotas[n] = p;
+      costoCuotas[n] = c;
     }
     return {
-      costos_cuotas_sin_interes: JSON.stringify(cuotasOut),
+      porcentajes_pago: JSON.stringify({ publico, tecnico }),
+      comisiones_metodo_pago: JSON.stringify(comisiones),
+      porcentajes_cuotas: JSON.stringify(pctCuotas),
+      costos_cuotas_sin_interes: JSON.stringify(costoCuotas),
       cuotas_sin_interes_max: String(cuotasMax),
-      ajustes_metodo_pago: JSON.stringify(out.publico),
-      ajustes_metodo_pago_tecnico: JSON.stringify(out.tecnico),
-      comisiones_metodo_pago: JSON.stringify(out.comision),
     };
+  }
+
+  // Config "en edicion" (lo que esta tipeado, sin guardar) para calcular en
+  // vivo el minimo de cada forma de pago.
+  function configEnEdicion() {
+    try {
+      return { ...valores, ...serializarTablaPagos() };
+    } catch {
+      return valores;
+    }
   }
 
   function cambiarValor(clave, valor) {
@@ -181,6 +225,8 @@ export default function Configuracion() {
     setError(null);
     try {
       const body = { ...valores, ...serializarTablaPagos() };
+      if (body.cotizacion_dolar != null) body.cotizacion_dolar = normalizarNumero(body.cotizacion_dolar);
+      body.cotizacion_modo = modoDolar;
       const actualizado = await api.put('/config', body);
       setConfig(actualizado);
       setValores(actualizado);
@@ -218,9 +264,18 @@ export default function Configuracion() {
     setError(null);
     try {
       const resultado = await api.post('/config/actualizar-cotizacion');
-      setValores((prev) => ({ ...prev, cotizacion_dolar: String(resultado.cotizacion_dolar) }));
-      setConfig((prev) => ({ ...prev, cotizacion_dolar: String(resultado.cotizacion_dolar) }));
-      toast(`Cotización actualizada a $${resultado.cotizacion_dolar} (${resultado.fuente}) ✓`, { duration: 5000 });
+      const data = await api.get('/config');
+      setConfig(data);
+      setValores((prev) => ({
+        ...prev,
+        cotizacion_dolar: data.cotizacion_dolar,
+        cotizacion_bna_referencia: data.cotizacion_bna_referencia,
+        cotizacion_bna_fecha: data.cotizacion_bna_fecha,
+      }));
+      const bna = Number(resultado.cotizacion_bna).toLocaleString('es-AR');
+      if (resultado.modo === 'fijo') toast(`Dólar BNA hoy: $${bna}. Tu cotización fija no cambió.`, { duration: 5000 });
+      else if (!resultado.cambio) toast(`Dólar BNA hoy: $${bna}. La cotización se mantiene en $${Number(resultado.cotizacion_dolar).toLocaleString('es-AR')}.`, { duration: 5000 });
+      else toast(`Cotización actualizada a $${Number(resultado.cotizacion_dolar).toLocaleString('es-AR')} ✓`, { duration: 5000 });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -273,6 +328,10 @@ export default function Configuracion() {
   const ultimaActualizacionDolar = config?.cotizacion_dolar_actualizada_en
     ? new Date(config.cotizacion_dolar_actualizada_en).toLocaleString('es-AR')
     : null;
+  const bnaReferencia = Number(valores.cotizacion_bna_referencia || 0);
+  const fechaBna = valores.cotizacion_bna_fecha ? new Date(valores.cotizacion_bna_fecha).toLocaleDateString('es-AR') : null;
+  const modoGuardado = config ? modoDolarDesdeConfig(config) : 'automatico';
+  const hayCambiosDolar = modoDolar !== modoGuardado || String(valores.cotizacion_dolar ?? '') !== String(config?.cotizacion_dolar ?? '');
 
   return (
     <div className="page">
@@ -280,20 +339,59 @@ export default function Configuracion() {
 
       {error && <div className="error-box">{error}</div>}
 
-      {/* Card con la cotización del dólar de hoy, bien visible arriba de todo */}
-      <div className="panel" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-        <div>
-          <p className="muted" style={{ margin: '0 0 4px', fontSize: 12 }}>Dólar hoy</p>
-          <p style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>
-            {valores.cotizacion_dolar ? `$${Number(valores.cotizacion_dolar).toLocaleString('es-AR')}` : '—'}
-          </p>
-          {ultimaActualizacionDolar && (
-            <p className="muted" style={{ margin: '4px 0 0', fontSize: 11 }}>Actualizado: {ultimaActualizacionDolar}</p>
-          )}
+      {/* Card de la cotización del dólar: todos los costos están en USD y se pasan a pesos con este valor */}
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+          <div>
+            <p className="muted" style={{ margin: '0 0 4px', fontSize: 12 }}>Dólar que usa el sistema (costos USD → pesos)</p>
+            {modoDolar === 'fijo' ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 24, fontWeight: 700 }}>$</span>
+                <input
+                  inputMode="decimal"
+                  value={valores.cotizacion_dolar ?? ''}
+                  onChange={(e) => cambiarValor('cotizacion_dolar', e.target.value)}
+                  style={{ fontSize: 22, fontWeight: 700, width: 150 }}
+                />
+              </div>
+            ) : (
+              <p style={{ margin: 0, fontSize: 28, fontWeight: 700 }}>
+                {valores.cotizacion_dolar ? `$${Number(valores.cotizacion_dolar).toLocaleString('es-AR')}` : '—'}
+              </p>
+            )}
+            {ultimaActualizacionDolar && (
+              <p className="muted" style={{ margin: '4px 0 0', fontSize: 11 }}>Último cambio: {ultimaActualizacionDolar}</p>
+            )}
+            <p className="muted" style={{ margin: '6px 0 0', fontSize: 12 }}>
+              Dólar oficial BNA (venta): <strong>{bnaReferencia ? `$${bnaReferencia.toLocaleString('es-AR')}` : '—'}</strong>
+              {fechaBna && ` · publicado el ${fechaBna}`}
+            </p>
+          </div>
+
+          <div style={{ minWidth: 260, maxWidth: 380 }}>
+            <label className="muted" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Cómo se actualiza</label>
+            <select value={modoDolar} onChange={(e) => setModoDolar(e.target.value)} style={{ width: '100%' }}>
+              <option value="automatico">Automático: sigue al BNA (sube y baja)</option>
+              <option value="solo_sube">Solo sube: sigue al BNA, pero si baja no la toca</option>
+              <option value="fijo">Fijo: la cargo yo y no cambia sola</option>
+            </select>
+            <p className="muted" style={{ margin: '6px 0 8px', fontSize: 11 }}>
+              {modoDolar === 'automatico' && 'Se actualiza sola una vez por día con el dólar oficial del Banco Nación.'}
+              {modoDolar === 'solo_sube' && 'Se actualiza sola una vez por día, pero nunca baja: si el BNA baja, los precios quedan como están.'}
+              {modoDolar === 'fijo' && 'Escribí el valor a la izquierda. Los precios quedan fijos hasta que lo cambies vos (el BNA se muestra solo como referencia).'}
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {hayCambiosDolar && (
+                <button type="button" className="btn-primary" onClick={guardarTodo} disabled={guardando}>
+                  {guardando ? 'Guardando...' : 'Guardar dólar'}
+                </button>
+              )}
+              <button type="button" className="btn-secondary" onClick={actualizarCotizacion} disabled={actualizandoCotizacion || hayCambiosDolar} title={hayCambiosDolar ? 'Primero guardá los cambios' : ''}>
+                {actualizandoCotizacion ? 'Consultando...' : modoDolar === 'fijo' ? 'Ver BNA de hoy' : 'Actualizar ahora (BNA)'}
+              </button>
+            </div>
+          </div>
         </div>
-        <button type="button" className="btn-secondary" onClick={actualizarCotizacion} disabled={actualizandoCotizacion}>
-          {actualizandoCotizacion ? 'Actualizando...' : 'Actualizar ahora (BNA)'}
-        </button>
       </div>
 
       <form onSubmit={guardarTodo}>
@@ -322,75 +420,83 @@ export default function Configuracion() {
         ))}
 
         <details className="panel" style={{ marginBottom: 16 }} open>
-          <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 16 }}>Formas de pago: descuentos, recargos y comisiones de Mercado Pago</summary>
-          <div style={{ marginTop: 14 }}>
-            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              <strong>Público / Técnico:</strong> % de descuento (negativo, ej. -10) o recargo (positivo) que decidís vos. Se usa "Técnico" cuando la venta tiene un cliente de la agenda, y "Público" cuando no.
-              <br />
-              <strong>Comisión MP:</strong> el % que te cobra Mercado Pago, <em>sin IVA</em>, tal cual figura en Mercado Pago → Costos y cuotas. El sistema le suma el IVA y se lo traslada al cliente para que te quede limpio lo mismo que en efectivo.
-            </p>
-            <table className="simple-table">
-              <thead>
-                <tr><th>Forma de pago</th><th>Público %</th><th>Técnico %</th><th>Comisión MP % (sin IVA)</th><th>Recargo real al cliente</th></tr>
-              </thead>
-              <tbody>
-                {METODOS_PAGO.map((m) => {
-                  const fila = tablaPagos[m.clave] || {};
-                  const usaMp = m.clave !== 'efectivo' && m.clave !== 'transferencia';
-                  const com = Number(String(fila.comision || '0').replace(',', '.')) || 0;
-                  const imp = metodoPagaImpuesto(m.clave) ? impuestoCobrosDesdeConfig(valores) : 0;
-                  const efectiva = ((usaMp ? com : 0) * IVA_COMISION) / 100 + imp / 100;
-                  const recargoReal = efectiva > 0 && efectiva < 1 ? ((1 / (1 - efectiva) - 1) * 100).toFixed(2).replace('.', ',') : null;
-                  return (
-                    <tr key={m.clave}>
-                      <td>{m.label}</td>
-                      <td><input className="input-inline" inputMode="decimal" value={fila.publico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'publico', e.target.value)} placeholder="0" style={{ width: 70 }} /></td>
-                      <td><input className="input-inline" inputMode="decimal" value={fila.tecnico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'tecnico', e.target.value)} placeholder="0" style={{ width: 70 }} /></td>
-                      <td>
-                        {usaMp
-                          ? <input className="input-inline" inputMode="decimal" value={fila.comision ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'comision', e.target.value)} placeholder="0" style={{ width: 70 }} />
-                          : <span className="muted">—</span>}
-                      </td>
-                      <td className="muted">{recargoReal ? `+${recargoReal}%` : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <summary style={{ cursor: 'pointer', fontWeight: 600, fontSize: 16 }}>Formas de pago: precio de lista, descuentos y recargos</summary>
+          {(() => {
+            const cfg = configEnEdicion();
+            const sugerido = recargoListaSugerido(cfg);
+            const estiloMin = (pct, min) => (Number.isFinite(pct) && pct < min - 0.005 ? { color: 'var(--danger, #dc2626)', fontWeight: 600 } : {});
+            return (
+              <div style={{ marginTop: 14 }}>
+                <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+                  El <strong>precio de lista</strong> es el precio con Point débito: el precio cargado de cada producto (lo que querés que te quede) + el % de abajo.
+                  Sobre esa lista, cada forma de pago tiene su descuento (−) o recargo (+), distinto para público y para técnicos (clientes de la agenda).
+                  <br />
+                  <strong>Mínimo:</strong> el % por debajo del cual perdés plata con las comisiones de Mercado Pago cargadas. Si un % queda abajo del mínimo se marca en rojo
+                  (en descuentos de efectivo/transferencia puede ser a propósito, como promoción).
+                </p>
 
-            <label className="campo" style={{ maxWidth: 420, marginTop: 14 }}>
-              <span>Impuesto sobre los créditos y débitos (%) — se suma solo en cobros con Point y QR (no en efectivo ni transferencia). Poné 0 para no trasladarlo.</span>
-              <input
-                inputMode="decimal"
-                value={valores.impuesto_cobros_pct ?? ''}
-                placeholder="0,6"
-                onChange={(e) => cambiarValor('impuesto_cobros_pct', e.target.value)}
-                style={{ width: 100 }}
-              />
-            </label>
+                <label className="campo" style={{ maxWidth: 520 }}>
+                  <span>Precio de lista = precio cargado + este % (vacío = automático, hoy {formatoPct(sugerido)}, el costo real de cobrar con débito)</span>
+                  <input inputMode="decimal" value={valores.recargo_lista_pct ?? ''} placeholder={String(sugerido).replace('.', ',')} onChange={(e) => cambiarValor('recargo_lista_pct', e.target.value)} style={{ width: 100 }} />
+                </label>
 
-            <h3 style={{ margin: '18px 0 6px', fontSize: 14 }}>Cuotas sin interés (Point y QR con crédito)</h3>
-            <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
-              El costo de cada cantidad de cuotas, tal cual figura en Mercado Pago → Costos y cuotas → Por ofrecer cuotas. Se suma a la comisión de crédito (+ IVA) y se traslada al precio. Tiene que coincidir con lo que tenés activado en Mercado Pago.
-            </p>
-            <label className="campo" style={{ maxWidth: 260 }}>
-              <span>Ofrecés hasta</span>
-              <select value={cuotasMax} onChange={(e) => setCuotasMax(Number(e.target.value))}>
-                {CUOTAS_POSIBLES.map((n) => <option key={n} value={n}>{n === 1 ? 'Sin cuotas (solo 1 pago)' : `${n} cuotas`}</option>)}
-              </select>
-            </label>
-            <table className="simple-table" style={{ maxWidth: 420 }}>
-              <thead><tr><th>Cuotas</th><th>Costo MP % (sin IVA)</th></tr></thead>
-              <tbody>
-                {CUOTAS_POSIBLES.filter((n) => n > 1).map((n) => (
-                  <tr key={n} style={{ opacity: n <= cuotasMax ? 1 : 0.5 }}>
-                    <td>{n} cuotas</td>
-                    <td><input className="input-inline" inputMode="decimal" value={tablaCuotas[n] ?? ''} onChange={(e) => setTablaCuotas((t) => ({ ...t, [n]: e.target.value }))} style={{ width: 80 }} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                <table className="simple-table" style={{ marginTop: 10 }}>
+                  <thead>
+                    <tr><th>Forma de pago</th><th>Público %</th><th>Técnico %</th><th>Mínimo</th><th>Comisión MP % (sin IVA)</th></tr>
+                  </thead>
+                  <tbody>
+                    {METODOS_PAGO.map((m) => {
+                      const f = tablaPagos[m.clave] || {};
+                      const min = minimoSobreLista(cfg, m.clave);
+                      const sinMp = m.clave === 'efectivo' || m.clave === 'transferencia';
+                      return (
+                        <tr key={m.clave}>
+                          <td>{m.label}{esMetodoCredito(m.clave) && <span className="muted" style={{ fontSize: 11 }}> (1 pago)</span>}</td>
+                          <td><input className="input-inline" inputMode="decimal" value={f.publico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'publico', e.target.value)} style={{ width: 60, ...estiloMin(num(f.publico), min) }} /></td>
+                          <td><input className="input-inline" inputMode="decimal" value={f.tecnico ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'tecnico', e.target.value)} style={{ width: 60, ...estiloMin(num(f.tecnico), min) }} /></td>
+                          <td className="muted">{formatoPct(min)}</td>
+                          <td>{sinMp ? <span className="muted">—</span> : <input className="input-inline" inputMode="decimal" value={f.comision ?? ''} onChange={(e) => cambiarTablaPagos(m.clave, 'comision', e.target.value)} style={{ width: 60 }} />}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+
+                <label className="campo" style={{ maxWidth: 520, marginTop: 14 }}>
+                  <span>Impuesto sobre los créditos y débitos (%) — lo descuenta MP en cobros con Point y QR (no en efectivo ni transferencia). Solo se usa para calcular el mínimo.</span>
+                  <input inputMode="decimal" value={valores.impuesto_cobros_pct ?? ''} placeholder="0,6" onChange={(e) => cambiarValor('impuesto_cobros_pct', e.target.value)} style={{ width: 100 }} />
+                </label>
+
+                <h3 style={{ margin: '18px 0 6px', fontSize: 14 }}>Crédito en cuotas sin interés (Point y QR)</h3>
+                <p className="muted" style={{ marginTop: 0, fontSize: 12 }}>
+                  Recargo sobre la lista para cada cantidad de cuotas (igual para público y técnicos). El costo de MP es el de "Por ofrecer cuotas" y se suma a la comisión de crédito.
+                </p>
+                <label className="campo" style={{ maxWidth: 260 }}>
+                  <span>Ofrecés hasta (tiene que coincidir con Mercado Pago)</span>
+                  <select value={cuotasMax} onChange={(e) => setCuotasMax(Number(e.target.value))}>
+                    {CUOTAS_POSIBLES.map((n) => <option key={n} value={n}>{n === 1 ? 'Sin cuotas (solo 1 pago)' : `${n} cuotas`}</option>)}
+                  </select>
+                </label>
+                <table className="simple-table" style={{ maxWidth: 560 }}>
+                  <thead><tr><th>Cuotas</th><th>Recargo %</th><th>Mínimo</th><th>Costo MP % (sin IVA)</th></tr></thead>
+                  <tbody>
+                    {CUOTAS_POSIBLES.filter((n) => n > 1).map((n) => {
+                      const f = tablaCuotas[n] || {};
+                      const min = minimoSobreLista(cfg, 'tarjeta_credito', n);
+                      return (
+                        <tr key={n} style={{ opacity: n <= cuotasMax ? 1 : 0.5 }}>
+                          <td>{n} cuotas</td>
+                          <td><input className="input-inline" inputMode="decimal" value={f.pct ?? ''} onChange={(e) => cambiarTablaCuotas(n, 'pct', e.target.value)} style={{ width: 60, ...estiloMin(num(f.pct), min) }} /></td>
+                          <td className="muted">{formatoPct(min)}</td>
+                          <td><input className="input-inline" inputMode="decimal" value={f.costo ?? ''} onChange={(e) => cambiarTablaCuotas(n, 'costo', e.target.value)} style={{ width: 70 }} /></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
         </details>
 
         <button type="submit" className="btn-primary" disabled={guardando} style={{ marginBottom: 16 }}>
