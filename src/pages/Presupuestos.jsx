@@ -5,6 +5,8 @@ import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
 import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
+import { precioListaProducto, ofertaVigente, textoOferta } from '../utils/ofertas';
+import Miniatura from '../components/Miniatura';
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
@@ -184,6 +186,24 @@ export default function Presupuestos() {
   // se usa la tabla tecnico, si no la publica (venta/presupuesto de mostrador).
   const esTecnico = !!clienteSeleccionado;
 
+  // Precio de cada línea en vivo según la forma de pago (los productos en
+  // oferta cambian de precio según el método, ver utils/ofertas.js).
+  const contextoPrecio = { metodo: metodoPago, esTecnico, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 };
+  function precioUnitarioProducto(productoId, respaldo) {
+    const v = precioListaProducto(productosPorId[productoId], config, contextoPrecio);
+    return v ?? respaldo ?? 0;
+  }
+  function precioLinea(l) {
+    if (l.kind === 'grupo') {
+      return (l.componentes || []).reduce((acc, c) => acc + precioUnitarioProducto(c.producto_id, c.precioEstimado) * c.cantidadPorGrupo, 0);
+    }
+    return precioUnitarioProducto(l.id, l.precioEstimado);
+  }
+  function lineaEnOferta(l) {
+    if (l.kind === 'grupo') return (l.componentes || []).some((c) => ofertaVigente(productosPorId[c.producto_id]));
+    return !!ofertaVigente(productosPorId[l.id]);
+  }
+
   // Busqueda igual que el programa original: aparece apenas se hace foco, y
   // busca por palabras sueltas en cualquier orden sin importar mayusc/tildes.
   const resultadosBusqueda = useMemo(() => {
@@ -191,7 +211,7 @@ export default function Presupuestos() {
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
-      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock }));
+      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock, cantidad_imagenes: p.cantidad_imagenes, oferta: textoOferta(p, labelMetodo, formatoMoneda) }));
     const grps = grupos
       .filter((g) => !hayQuery || coincideTexto(g.nombre, busqueda))
       .map((g) => ({ kind: 'grupo', id: g.id, descripcion: g.nombre, cantidad_productos: g.cantidad_productos }));
@@ -381,7 +401,7 @@ export default function Presupuestos() {
     setCarrito((prev) => prev.map((l, i) => (i === idx ? { ...l, descuentoPct: Number.isNaN(pct) ? 0 : pct } : l)));
   }
 
-  const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
+  const subtotalEstimado = carrito.reduce((acc, l) => acc + precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
   // Mismo calculo que Nueva Venta: antes esta pantalla solo avisaba "hay
   // descuento" al lado de la forma de pago pero el Subtotal mostrado no
@@ -662,8 +682,10 @@ export default function Presupuestos() {
                           onChange={() => toggleSeleccionBusqueda(r)}
                           onClick={(e) => e.stopPropagation()}
                         />
+                        {r.kind === 'producto' && <Miniatura productoId={r.id} cantidadImagenes={r.cantidad_imagenes} tam={32} descripcion={r.descripcion} />}
                         <span style={{ flex: 1 }}>
                           {r.kind === 'producto' && r.codigo && <span className="muted">#{r.codigo} — </span>}{r.descripcion}
+                          {r.oferta && <div style={{ fontSize: 11 }}><span className="badge-oferta">OFERTA</span> {r.oferta}</div>}
                         </span>
                         {r.kind === 'producto' && <span className="muted">{formatoMoneda(r.precio)} · stock {r.stock}</span>}
                         {r.kind === 'grupo' && <span className="muted">kit — {r.cantidad_productos} productos</span>}
@@ -689,8 +711,12 @@ export default function Presupuestos() {
                         <input type="checkbox" checked={lineasSeleccionadas.has(idx)} onChange={() => toggleLineaSeleccionada(idx)} />
                       </td>
                       <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {l.kind === 'producto' && <Miniatura productoId={l.id} cantidadImagenes={productosPorId[l.id]?.cantidad_imagenes} tam={30} descripcion={l.descripcion} />}
+                        <div>
                         {l.kind === 'producto' && l.codigo && <span className="muted">#{l.codigo} — </span>}
                         {l.descripcion}
+                        {lineaEnOferta(l) && <>{' '}<span className="badge-oferta" title={textoOferta(productosPorId[l.id], labelMetodo, formatoMoneda) || 'Tiene productos en oferta'}>OFERTA</span></>}
                         {l.kind === 'grupo' && (
                           <>
                             {' '}<span className="muted" style={{ fontSize: 11 }}>(kit)</span>{' '}
@@ -699,6 +725,8 @@ export default function Presupuestos() {
                             </button>
                           </>
                         )}
+                        </div>
+                        </div>
                       </td>
                       <td>
                         <div className="cantidad-stepper">
@@ -708,7 +736,7 @@ export default function Presupuestos() {
                         </div>
                       </td>
                       <td>
-                        {formatoMoneda(l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100))}
+                        {formatoMoneda(precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100))}
                         {Number(l.descuentoPct) !== 0 && (
                           <div className="muted" style={{ fontSize: 11 }}>desc. {l.descuentoPct}%</div>
                         )}

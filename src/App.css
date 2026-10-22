@@ -933,3 +933,35 @@ textarea, select {
 .resumen-linea.descuento { color: var(--success); }
 .resumen-linea.total { font-weight: 700; font-size: 15px; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; }
 .resumen-totales input { border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; }
+
+/* --- Ofertas e imágenes de productos --- */
+.badge-oferta {
+  display: inline-block;
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 4px;
+  line-height: 16px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.miniatura {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--border, #e5e7eb);
+  border: 1px solid var(--border, #e5e7eb);
+  cursor: zoom-in;
+}
+.miniatura img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}

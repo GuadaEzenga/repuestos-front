@@ -4,6 +4,11 @@ import api from '../api/client';
 import { parseNumero } from '../utils/numero';
 import { coincideTexto } from '../utils/busqueda';
 import { useUi } from '../context/UiContext';
+import Miniatura from '../components/Miniatura';
+import ImagenesProducto from '../components/ImagenesProducto';
+import OfertaModal from '../components/OfertaModal';
+import { ofertaVigente, textoOferta, hoyArgentina } from '../utils/ofertas';
+import { labelMetodo } from '../utils/pagos';
 
 function formatoMoneda(valor, moneda = 'ARS') {
   if (valor == null || valor === '') return '—';
@@ -150,6 +155,15 @@ export default function Productos() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [flashId, setFlashId] = useState(null);
+  // Se incrementa cada vez que se recarga la tabla desde el servidor: los
+  // inputs de la tabla son "defaultValue" (no controlados) y usan esto como
+  // key para mostrar el valor nuevo después de editar en el modal.
+  const [versionTabla, setVersionTabla] = useState(0);
+
+  // --- Ofertas ---
+  const [ofertaProducto, setOfertaProducto] = useState(null); // producto con la ventana de oferta abierta
+  const [mostrarSelectorOferta, setMostrarSelectorOferta] = useState(false);
+  const [busquedaOferta, setBusquedaOferta] = useState('');
   const [eliminandoId, setEliminandoId] = useState(null);
 
   const [nuevo, setNuevo] = useState(VACIO);
@@ -256,6 +270,19 @@ export default function Productos() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Recarga la tabla en silencio (sin el cartel de "Cargando...") después
+  // de crear o editar un producto, para que se vea el precio/costo/stock
+  // nuevo sin tener que recargar la página.
+  async function refrescarTabla() {
+    try {
+      const dataProductos = await api.get('/productos', { pageSize: 5000, categoria: categoriaFiltro || undefined });
+      setProductosCompletos(dataProductos.productos);
+      setVersionTabla((v) => v + 1);
+    } catch {
+      // si falla, queda lo que había; no es grave
     }
   }
 
@@ -417,6 +444,7 @@ export default function Productos() {
         iva_pct: parseNumero(generalForm.iva_pct),
       });
       await refrescarDetalle(producto.id);
+      await refrescarTabla();
       toast('Datos del producto guardados ✓');
     } catch (err) {
       setErrorGeneral(err.message);
@@ -465,6 +493,7 @@ export default function Productos() {
       });
       setLoteEditId(null);
       await refrescarDetalle(productoId);
+      await refrescarTabla();
       toast('Lote actualizado ✓');
     } catch (err) {
       setErrorLote(err.message);
@@ -507,6 +536,7 @@ export default function Productos() {
       toast(resultado.mensaje || 'Restock registrado ✓', { duration: 5000 });
       setRestockForm(RESTOCK_VACIO);
       await refrescarDetalle(producto.id);
+      await refrescarTabla();
     } catch (err) {
       setErrorRestock(err.message);
     } finally {
@@ -753,6 +783,7 @@ export default function Productos() {
       }
       setNuevo(VACIO);
       setMostrarForm(false);
+      await refrescarTabla();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -767,6 +798,9 @@ export default function Productos() {
       <div className="dashboard-toolbar">
         <h1>Productos</h1>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn-secondary" onClick={() => { setBusquedaOferta(''); setMostrarSelectorOferta(true); }}>
+            Nueva oferta
+          </button>
           <button type="button" className="btn-secondary" onClick={abrirRecarga}>
             {mostrarRecarga ? 'Cancelar' : 'Recarga (garrafa → gas x kg)'}
           </button>
@@ -1004,6 +1038,26 @@ export default function Productos() {
                   <button type="button" className="btn-primary" disabled={guardandoGeneral} onClick={() => guardarGeneral(p)} style={{ marginBottom: 20 }}>
                     {guardandoGeneral ? 'Guardando...' : 'Guardar datos generales'}
                   </button>
+
+                  {/* --- Oferta --- */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', margin: '0 0 16px' }}>
+                    <span style={{ fontWeight: 600 }}>Oferta:</span>
+                    {ofertaVigente(p)
+                      ? <span><span className="badge-oferta">OFERTA</span> {textoOferta(p, labelMetodo, formatoMoneda)}</span>
+                      : <span className="muted">{Number(p.oferta_precio) > 0 ? 'vencida' : 'sin oferta'}</span>}
+                    <button type="button" className="btn-secondary" onClick={() => setOfertaProducto(p)}>
+                      {Number(p.oferta_precio) > 0 ? 'Editar oferta' : 'Nueva oferta'}
+                    </button>
+                  </div>
+
+                  {/* --- Imágenes (solo vendedor) --- */}
+                  <p style={{ margin: '0 0 6px', fontWeight: 600 }}>Imágenes</p>
+                  <div style={{ marginBottom: 18 }}>
+                    <ImagenesProducto
+                      productoId={p.id}
+                      onCambio={(cantidad) => setProductosCompletos((prev) => prev.map((x) => (x.id === p.id ? { ...x, cantidad_imagenes: cantidad } : x)))}
+                    />
+                  </div>
 
                   {/* --- Resumen --- */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginBottom: 20 }}>
@@ -1286,6 +1340,7 @@ export default function Productos() {
                     </td>
                     <td>
                       <input
+                        key={`codigo-${versionTabla}`}
                         className="input-inline"
                         defaultValue={p.codigo || ''}
                         onBlur={(e) => guardarCampo(p.id, 'codigo', e.target.value)}
@@ -1293,15 +1348,20 @@ export default function Productos() {
                       />
                     </td>
                     <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Miniatura productoId={p.id} cantidadImagenes={p.cantidad_imagenes} tam={30} descripcion={p.descripcion} />
                       <input
+                        key={`descripcion-${versionTabla}`}
                         className="input-inline"
                         defaultValue={p.descripcion || ''}
                         onBlur={(e) => guardarCampo(p.id, 'descripcion', e.target.value)}
                         style={{ width: '100%', minWidth: 280 }}
                       />
+                      </div>
                     </td>
                     <td>
                       <input
+                        key={`categoria-${versionTabla}`}
                         className="input-inline"
                         defaultValue={p.categoria || ''}
                         onBlur={(e) => guardarCampo(p.id, 'categoria', e.target.value)}
@@ -1310,6 +1370,7 @@ export default function Productos() {
                     </td>
                     <td>
                       <input
+                        key={`stock-${versionTabla}`}
                         type="text" inputMode="decimal"
                         className={`input-inline ${Number(p.stock) <= 0 ? 'valor-critico' : Number(p.stock) <= 3 ? 'valor-alerta' : ''}`}
                         defaultValue={p.stock ?? ''}
@@ -1335,11 +1396,18 @@ export default function Productos() {
                           )}
                         </>
                       )}
+                      {ofertaVigente(p) && (
+                        <div style={{ fontSize: 11 }} title={textoOferta(p, labelMetodo, formatoMoneda)}>
+                          <span className="badge-oferta">OFERTA</span> {formatoMoneda(Number(p.oferta_precio))}
+                        </div>
+                      )}
                     </td>
                     <td style={{ whiteSpace: 'nowrap' }}>
                       <button type="button" onClick={() => abrirEditar(p)} className="btn-link">
                         {detalleAbiertoId === p.id ? 'Cerrar' : 'Editar'}
                       </button>
+                      {' · '}
+                      <button type="button" onClick={() => setOfertaProducto(p)} className="btn-link">Oferta</button>
                       {' · '}
                       <button type="button" onClick={() => eliminarProducto(p.id)} disabled={eliminandoId === p.id} className="btn-link-danger">
                         {eliminandoId === p.id ? 'Eliminando...' : 'Eliminar'}
@@ -1362,6 +1430,69 @@ export default function Productos() {
           </>
         )}
       </div>
+
+      {mostrarSelectorOferta && (() => {
+        const hoy = hoyArgentina();
+        const conOferta = productosCompletos.filter((x) => Number(x.oferta_precio) > 0);
+        const encontrados = busquedaOferta.trim()
+          ? productosCompletos.filter((x) => coincideTexto(`${x.codigo || ''} ${x.descripcion || ''}`, busquedaOferta)).slice(0, 40)
+          : [];
+        const elegir = (x) => { setMostrarSelectorOferta(false); setOfertaProducto(x); };
+        return (
+          <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setMostrarSelectorOferta(false); }}>
+            <div className="modal-ventana modal-ventana-ancha">
+              <div className="modal-header">
+                <h2>Nueva oferta</h2>
+                <button type="button" className="modal-cerrar" onClick={() => setMostrarSelectorOferta(false)} aria-label="Cerrar">×</button>
+              </div>
+              <div className="modal-body" style={{ gap: 10 }}>
+                <input autoFocus placeholder="Buscá el producto (código o descripción)..." value={busquedaOferta} onChange={(e) => setBusquedaOferta(e.target.value)} style={{ width: '100%' }} />
+                {encontrados.length > 0 && (
+                  <ul className="resultados-lista" style={{ margin: 0 }}>
+                    {encontrados.map((x) => (
+                      <li key={x.id} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => elegir(x)}>
+                        <Miniatura productoId={x.id} cantidadImagenes={x.cantidad_imagenes} tam={28} descripcion={x.descripcion} />
+                        <span style={{ flex: 1 }}>{x.codigo ? <span className="muted">#{x.codigo} — </span> : null}{x.descripcion}</span>
+                        {ofertaVigente(x) && <span className="badge-oferta">OFERTA</span>}
+                        <span className="muted">{formatoMoneda(x.precio_lista ?? x.precio)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {busquedaOferta.trim() && encontrados.length === 0 && <p className="muted" style={{ margin: 0 }}>No se encontraron productos.</p>}
+
+                <p style={{ margin: '8px 0 0', fontWeight: 600 }}>Ofertas cargadas ({conOferta.length})</p>
+                {conOferta.length === 0 && <p className="muted" style={{ margin: 0 }}>Todavía no hay productos en oferta.</p>}
+                {conOferta.length > 0 && (
+                  <table className="simple-table">
+                    <tbody>
+                      {conOferta.map((x) => {
+                        const vencida = x.oferta_hasta && String(x.oferta_hasta).slice(0, 10) < hoy;
+                        return (
+                          <tr key={x.id} style={{ cursor: 'pointer', opacity: vencida ? 0.6 : 1 }} onClick={() => elegir(x)}>
+                            <td>{x.descripcion}</td>
+                            <td>{vencida ? <span className="muted">vencida</span> : textoOferta(x, labelMetodo, formatoMoneda)}</td>
+                            <td><button type="button" className="btn-link">Editar</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {ofertaProducto && (
+        <OfertaModal
+          producto={productosCompletos.find((x) => x.id === ofertaProducto.id) || ofertaProducto}
+          config={configFull}
+          onCerrar={() => setOfertaProducto(null)}
+          onGuardado={async () => { setOfertaProducto(null); await refrescarTabla(); }}
+        />
+      )}
     </div>
   );
 }

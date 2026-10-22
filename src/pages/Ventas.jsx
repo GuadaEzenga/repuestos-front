@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
@@ -11,6 +12,7 @@ function formatoMoneda(valor) {
 
 export default function Ventas() {
   const { toast, confirm } = useUi();
+  const navigate = useNavigate();
   const [ventas, setVentas] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -115,6 +117,23 @@ export default function Ventas() {
     if (ventana) ventana.location.href = url;
   }
 
+  // Crea un presupuesto nuevo con los mismos productos/cliente/forma de pago
+  // de la venta, a precios de hoy. La venta no se toca.
+  async function pasarAPresupuesto(v) {
+    const ok = await confirm(
+      `¿Crear un presupuesto con los productos de la venta #${v.numero}? Se arma con los precios de hoy; la venta queda igual.`,
+      { confirmLabel: 'Crear presupuesto' }
+    );
+    if (!ok) return;
+    try {
+      const presupuesto = await api.post(`/ventas/${v.id}/presupuesto`, {});
+      toast(`Presupuesto #${presupuesto.numero} creado ✓`, { duration: 5000 });
+      navigate('/presupuestos');
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 5000 });
+    }
+  }
+
   async function anularVenta(id) {
     const ok = await confirm('¿Anular esta venta? Se devuelve el stock de los productos vendidos.', { danger: true, confirmLabel: 'Anular venta' });
     if (!ok) return;
@@ -215,6 +234,7 @@ export default function Ventas() {
                               <div className="menu-acciones-lista">
                                 <button type="button" onClick={() => { setMenuAbiertoId(null); verComprobante(v.id); }}>Descargar PDF</button>
                                 <button type="button" onClick={() => { setMenuAbiertoId(null); abrirEditar(v); }}>Editar</button>
+                                <button type="button" onClick={() => { setMenuAbiertoId(null); pasarAPresupuesto(v); }}>Pasar a presupuesto</button>
                                 {!v.afip_cae && (
                                   <button type="button" onClick={() => { setMenuAbiertoId(null); abrirFacturar(v); }}>Facturar</button>
                                 )}

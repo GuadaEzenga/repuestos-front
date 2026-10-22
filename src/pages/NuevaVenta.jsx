@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import { coincideTexto } from '../utils/busqueda';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
 import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
+import { precioListaProducto, ofertaVigente, textoOferta } from '../utils/ofertas';
+import Miniatura from '../components/Miniatura';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
@@ -73,6 +76,12 @@ export default function NuevaVenta() {
   const [guardando, setGuardando] = useState(false);
   const [errorVenta, setErrorVenta] = useState(null);
   const [ventaCreada, setVentaCreada] = useState(null);
+  // "Guardar como presupuesto": cuando el cliente no compra ahora y querés
+  // dejar la cotización guardada.
+  const [mostrarComoPresupuesto, setMostrarComoPresupuesto] = useState(false);
+  const [tituloPresupuesto, setTituloPresupuesto] = useState('');
+  const [guardandoPresupuesto, setGuardandoPresupuesto] = useState(false);
+  const [presupuestoGuardado, setPresupuestoGuardado] = useState(null);
 
   const [facturando, setFacturando] = useState(false);
   // Reintento de factura si AFIP fallo al confirmar la venta.
@@ -122,6 +131,26 @@ export default function NuevaVenta() {
   // publica. Misma logica que el backend (ver utils/pagos.js).
   const esTecnico = !!clienteSeleccionado;
 
+  // Precio de cada línea: se calcula en vivo con la forma de pago elegida,
+  // porque los productos en oferta tienen un precio distinto según el método
+  // (ver utils/ofertas.js). Si el producto no está en la lista cargada se usa
+  // el precio guardado en la línea.
+  const contextoPrecio = { metodo: metodoPago, esTecnico, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 };
+  function precioUnitarioProducto(productoId, respaldo) {
+    const v = precioListaProducto(productosPorId[productoId], config, contextoPrecio);
+    return v ?? respaldo ?? 0;
+  }
+  function precioLinea(l) {
+    if (l.kind === 'grupo') {
+      return (l.componentes || []).reduce((acc, c) => acc + precioUnitarioProducto(c.producto_id, c.precioEstimado) * c.cantidadPorGrupo, 0);
+    }
+    return precioUnitarioProducto(l.id, l.precioEstimado);
+  }
+  function lineaEnOferta(l) {
+    if (l.kind === 'grupo') return (l.componentes || []).some((c) => ofertaVigente(productosPorId[c.producto_id]));
+    return !!ofertaVigente(productosPorId[l.id]);
+  }
+
   // Igual que el programa original: apenas se hace click en el buscador (sin
   // escribir nada todavía) ya se muestran productos, y a medida que se
   // escribe busca por palabras sueltas, en cualquier orden, sin importar
@@ -131,7 +160,7 @@ export default function NuevaVenta() {
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
-      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock }));
+      .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock, cantidad_imagenes: p.cantidad_imagenes, oferta: textoOferta(p, labelMetodo, formatoMoneda) }));
     const grps = grupos
       .filter((g) => !hayQuery || coincideTexto(g.nombre, busqueda))
       .map((g) => ({ kind: 'grupo', id: g.id, descripcion: g.nombre, cantidad_productos: g.cantidad_productos }));
@@ -362,7 +391,7 @@ export default function NuevaVenta() {
     setCarrito((prev) => prev.map((l, i) => (i === idx ? { ...l, descuentoPct: Number.isNaN(pct) ? 0 : pct } : l)));
   }
 
-  const subtotalEstimado = carrito.reduce((acc, l) => acc + l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
+  const subtotalEstimado = carrito.reduce((acc, l) => acc + precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100), 0);
 
   const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
   const { ajustePct, montoAjuste } = calculo;
@@ -454,7 +483,45 @@ export default function NuevaVenta() {
     }
   }
 
+  async function guardarComoPresupuesto() {
+    if (carrito.length === 0) return;
+    setGuardandoPresupuesto(true);
+    setErrorVenta(null);
+    try {
+      const presupuesto = await api.post('/presupuestos', {
+        cliente_id: clienteSeleccionado?.id || null,
+        items: itemsParaEnviar(),
+        metodo_pago: metodoPago,
+        cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
+        notas: notas || null,
+        titulo: tituloPresupuesto || null,
+      });
+      nuevaVentaLimpia();
+      setPresupuestoGuardado(presupuesto);
+      setPresupuestos((prev) => [presupuesto, ...prev]);
+      toast(`Presupuesto #${presupuesto.numero} guardado ✓`);
+    } catch (err) {
+      setErrorVenta(err.message);
+    } finally {
+      setGuardandoPresupuesto(false);
+    }
+  }
+
+  async function verPresupuestoGuardado() {
+    try {
+      const blob = await api.get(`/presupuestos/${presupuestoGuardado.id}/comprobante`);
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      toast(err.message, { type: 'error' });
+    }
+  }
+
   function nuevaVentaLimpia() {
+    setMostrarComoPresupuesto(false);
+    setTituloPresupuesto('');
+    setPresupuestoGuardado(null);
     setCarrito([]);
     setExpandido({});
     setLineasSeleccionadas(new Set());
@@ -598,6 +665,15 @@ export default function NuevaVenta() {
     <div className="page">
       <h1>Nueva venta</h1>
 
+      {presupuestoGuardado && (
+        <div className="panel" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <span>✓ Se guardó el <strong>presupuesto #{presupuestoGuardado.numero}</strong>{presupuestoGuardado.titulo ? ` (${presupuestoGuardado.titulo})` : ''}.</span>
+          <button type="button" className="btn-secondary" onClick={verPresupuestoGuardado}>Ver PDF</button>
+          <Link to="/presupuestos" className="btn-link">Ir a Presupuestos</Link>
+          <button type="button" className="btn-link" onClick={() => setPresupuestoGuardado(null)} style={{ marginLeft: 'auto' }}>Cerrar</button>
+        </div>
+      )}
+
       <div className="venta-grid" onKeyDown={manejarKeyDownVenta}>
         <div>
           <div className="panel">
@@ -647,8 +723,10 @@ export default function NuevaVenta() {
                           onChange={() => toggleSeleccionBusqueda(r)}
                           onClick={(e) => e.stopPropagation()}
                         />
+                        {r.kind === 'producto' && <Miniatura productoId={r.id} cantidadImagenes={r.cantidad_imagenes} tam={32} descripcion={r.descripcion} />}
                         <span style={{ flex: 1 }}>
                           {r.kind === 'producto' && r.codigo && <span className="muted">#{r.codigo} — </span>}{r.descripcion}
+                          {r.oferta && <div style={{ fontSize: 11 }}><span className="badge-oferta">OFERTA</span> {r.oferta}</div>}
                         </span>
                         {r.kind === 'producto' && <span className="muted">{formatoMoneda(r.precio)} · stock {r.stock}</span>}
                         {r.kind === 'grupo' && <span className="muted">kit — {r.cantidad_productos} productos</span>}
@@ -677,8 +755,12 @@ export default function NuevaVenta() {
                         <input type="checkbox" checked={lineasSeleccionadas.has(idx)} onChange={() => toggleLineaSeleccionada(idx)} />
                       </td>
                       <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {l.kind === 'producto' && <Miniatura productoId={l.id} cantidadImagenes={productosPorId[l.id]?.cantidad_imagenes} tam={30} descripcion={l.descripcion} />}
+                        <div>
                         {l.kind === 'producto' && l.codigo && <span className="muted">#{l.codigo} — </span>}
                         {l.descripcion}
+                        {lineaEnOferta(l) && <>{' '}<span className="badge-oferta" title={textoOferta(productosPorId[l.id], labelMetodo, formatoMoneda) || 'Tiene productos en oferta'}>OFERTA</span></>}
                         {l.kind === 'grupo' && (
                           <>
                             {' '}<span className="muted" style={{ fontSize: 11 }}>(kit)</span>{' '}
@@ -687,6 +769,8 @@ export default function NuevaVenta() {
                             </button>
                           </>
                         )}
+                        </div>
+                        </div>
                       </td>
                       <td>
                         <div className="cantidad-stepper">
@@ -696,7 +780,7 @@ export default function NuevaVenta() {
                         </div>
                       </td>
                       <td>
-                        {formatoMoneda(l.precioEstimado * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100))}
+                        {formatoMoneda(precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100))}
                         {Number(l.descuentoPct) !== 0 && (
                           <div className="muted" style={{ fontSize: 11 }}>desc. {l.descuentoPct}%</div>
                         )}
@@ -899,6 +983,32 @@ export default function NuevaVenta() {
                 ? (guardando ? 'Guardando...' : 'Confirmar venta (sin factura)')
                 : (guardando ? 'Guardando y facturando...' : 'Confirmar venta y facturar')}
             </button>
+            {!mostrarComoPresupuesto ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ width: '100%', marginTop: 8 }}
+                disabled={carrito.length === 0 || guardando}
+                onClick={() => setMostrarComoPresupuesto(true)}
+                title="El cliente no compra ahora: guardá esto como presupuesto (no descuenta stock ni factura)"
+              >
+                Guardar como presupuesto
+              </button>
+            ) : (
+              <div className="factura-box" style={{ marginTop: 8 }}>
+                <label className="campo" style={{ width: '100%' }}>
+                  <span>Título del presupuesto (opcional)</span>
+                  <input value={tituloPresupuesto} onChange={(e) => setTituloPresupuesto(e.target.value)} placeholder="Ej: COMPRESOR HELADERA" style={{ width: '100%' }} autoFocus />
+                </label>
+                <p className="muted" style={{ fontSize: 11, margin: '4px 0 8px' }}>Se guarda con estos productos, cliente y forma de pago. No descuenta stock ni factura. El carrito se vacía.</p>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="button" className="btn-primary" onClick={guardarComoPresupuesto} disabled={guardandoPresupuesto}>
+                    {guardandoPresupuesto ? 'Guardando...' : 'Guardar presupuesto'}
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={() => setMostrarComoPresupuesto(false)}>Cancelar</button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
