@@ -1,60 +1,60 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../api/client';
 import { prepararImagen, olvidarMiniatura } from '../utils/imagenes';
 import { useUi } from '../context/UiContext';
+import { VisorImagenesLista } from './VisorImagenesLista';
 
 const MAX_IMAGENES = 6;
 
 // Gestión de imágenes de un producto (dentro de "Editar producto"). Son
 // solo para el vendedor: no salen en comprobantes ni presupuestos.
+// Se pueden subir con el botón o arrastrando fotos al recuadro.
 export default function ImagenesProducto({ productoId, onCambio }) {
   const { toast, confirm } = useUi();
   const [imagenes, setImagenes] = useState(null);
-  const [subiendo, setSubiendo] = useState(false);
-  const [ampliada, setAmpliada] = useState(null);
+  const [subiendo, setSubiendo] = useState(0); // cuántas faltan subir
+  const [arrastrando, setArrastrando] = useState(false);
+  const [ampliada, setAmpliada] = useState(null); // índice
   const inputRef = useRef(null);
 
-  async function cargar() {
-    try {
-      const data = await api.get(`/productos/${productoId}/imagenes`);
-      setImagenes(data.imagenes);
-    } catch (err) {
-      toast(err.message, { type: 'error' });
-      setImagenes([]);
-    }
-  }
-
-  useEffect(() => { cargar(); }, [productoId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let vivo = true;
+    api.get(`/productos/${productoId}/imagenes`)
+      .then((data) => { if (vivo) setImagenes(data.imagenes); })
+      .catch((err) => { if (vivo) { toast(err.message, { type: 'error' }); setImagenes([]); } });
+    return () => { vivo = false; };
+  }, [productoId, toast]);
 
   function cambio(lista) {
     olvidarMiniatura(productoId);
     onCambio?.(lista.length);
   }
 
-  async function subir(e) {
-    const archivos = [...(e.target.files || [])];
-    e.target.value = '';
-    if (archivos.length === 0) return;
+  async function subirArchivos(archivos) {
+    const fotos = archivos.filter((a) => a.type.startsWith('image/'));
+    if (fotos.length === 0) return;
     const lugar = MAX_IMAGENES - (imagenes?.length || 0);
     if (lugar <= 0) {
       toast(`Máximo ${MAX_IMAGENES} imágenes por producto`, { type: 'error' });
       return;
     }
-    setSubiendo(true);
+    const aSubir = fotos.slice(0, lugar);
+    setSubiendo(aSubir.length);
     let lista = [...(imagenes || [])];
     try {
-      for (const archivo of archivos.slice(0, lugar)) {
+      for (const archivo of aSubir) {
         const datos = await prepararImagen(archivo);
         const nueva = await api.post(`/productos/${productoId}/imagenes`, datos);
         lista = [...lista, nueva];
         setImagenes(lista);
+        setSubiendo((n) => n - 1);
       }
-      toast(archivos.length > 1 ? 'Imágenes agregadas ✓' : 'Imagen agregada ✓');
-      if (archivos.length > lugar) toast(`Se subieron solo ${lugar} (máximo ${MAX_IMAGENES})`, { type: 'error' });
+      if (fotos.length > lugar) toast(`Se subieron solo ${lugar} (máximo ${MAX_IMAGENES})`, { type: 'error' });
+      else toast(aSubir.length > 1 ? 'Imágenes agregadas ✓' : 'Imagen agregada ✓');
     } catch (err) {
       toast(err.message, { type: 'error', duration: 5000 });
     } finally {
-      setSubiendo(false);
+      setSubiendo(0);
       cambio(lista);
     }
   }
@@ -78,49 +78,57 @@ export default function ImagenesProducto({ productoId, onCambio }) {
       const lista = [img, ...imagenes.filter((i) => i.id !== img.id)];
       setImagenes(lista);
       cambio(lista);
+      toast('Imagen principal cambiada ✓');
     } catch (err) {
       toast(err.message, { type: 'error' });
     }
   }
 
+  const cerrarVisor = useCallback(() => setAmpliada(null), []);
+  const lleno = (imagenes?.length || 0) >= MAX_IMAGENES;
+
   return (
-    <div>
-      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-        Solo las ves vos (al buscar y vender). No salen en comprobantes ni facturas. La primera es la que aparece en las búsquedas.
-      </p>
+    <div
+      className={`galeria-producto${arrastrando ? ' arrastrando' : ''}`}
+      onDragOver={(e) => { if (!lleno) { e.preventDefault(); setArrastrando(true); } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setArrastrando(false); }}
+      onDrop={(e) => { e.preventDefault(); setArrastrando(false); subirArchivos([...(e.dataTransfer.files || [])]); }}
+    >
       {imagenes === null ? (
-        <p className="muted">Cargando...</p>
+        <p className="muted" style={{ margin: 0 }}>Cargando...</p>
       ) : (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div className="galeria-grid">
           {imagenes.map((img, i) => (
-            <div key={img.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-              <button type="button" className="miniatura" style={{ width: 72, height: 72, padding: 0 }} onClick={() => setAmpliada(img)} title="Ver grande">
+            <div key={img.id} className="galeria-item">
+              <button type="button" className="galeria-foto" onClick={() => setAmpliada(i)} title="Ver grande">
                 <img src={img.miniatura} alt="" />
               </button>
-              <div style={{ display: 'flex', gap: 6, fontSize: 11 }}>
-                {i === 0 ? <span className="muted">principal</span> : <button type="button" className="btn-link" style={{ padding: 0, fontSize: 11 }} onClick={() => hacerPrincipal(img)}>principal</button>}
-                <button type="button" className="btn-link-danger" style={{ padding: 0, fontSize: 11 }} onClick={() => eliminar(img)}>borrar</button>
+              {i === 0 && <span className="galeria-chip">Principal</span>}
+              <div className="galeria-acciones">
+                {i !== 0 && (
+                  <button type="button" onClick={() => hacerPrincipal(img)} title="Usar como principal" aria-label="Usar como principal">★</button>
+                )}
+                <button type="button" className="peligro" onClick={() => eliminar(img)} title="Borrar" aria-label="Borrar">🗑</button>
               </div>
             </div>
           ))}
-          {imagenes.length < MAX_IMAGENES && (
-            <button type="button" className="btn-secondary" style={{ width: 72, height: 72 }} onClick={() => inputRef.current?.click()} disabled={subiendo}>
-              {subiendo ? '...' : '+ Foto'}
+          {Array.from({ length: subiendo }).map((_, i) => (
+            <div key={`sub-${i}`} className="galeria-item galeria-subiendo"><span className="spinner-chico" /></div>
+          ))}
+          {!lleno && !subiendo && (
+            <button type="button" className="galeria-agregar" onClick={() => inputRef.current?.click()}>
+              <span style={{ fontSize: 22, lineHeight: 1 }}>+</span>
+              <span>Agregar foto</span>
             </button>
           )}
-          <input ref={inputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={subir} />
         </div>
       )}
-      {ampliada && (
-        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setAmpliada(null); }}>
-          <div className="modal-ventana modal-ventana-ancha">
-            <div className="modal-header">
-              <span />
-              <button type="button" className="modal-cerrar" onClick={() => setAmpliada(null)} aria-label="Cerrar">×</button>
-            </div>
-            <img src={ampliada.imagen} alt="" style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
-          </div>
-        </div>
+      <input ref={inputRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={(e) => { const f = [...(e.target.files || [])]; e.target.value = ''; subirArchivos(f); }} />
+      <p className="muted" style={{ fontSize: 11.5, margin: '8px 0 0' }}>
+        Hasta {MAX_IMAGENES} fotos. Podés arrastrarlas acá. Solo las ves vos (no salen en comprobantes ni facturas); la principal es la que aparece en las búsquedas.
+      </p>
+      {ampliada != null && imagenes?.[ampliada] && (
+        <VisorImagenesLista imagenes={imagenes} inicial={ampliada} onCerrar={cerrarVisor} />
       )}
     </div>
   );

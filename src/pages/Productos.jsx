@@ -5,6 +5,7 @@ import { parseNumero } from '../utils/numero';
 import { coincideTexto } from '../utils/busqueda';
 import { useUi } from '../context/UiContext';
 import Miniatura from '../components/Miniatura';
+import TextareaAuto from '../components/TextareaAuto';
 import ImagenesProducto from '../components/ImagenesProducto';
 import OfertaModal from '../components/OfertaModal';
 import { ofertaVigente, textoOferta, hoyArgentina } from '../utils/ofertas';
@@ -159,6 +160,7 @@ export default function Productos() {
   // inputs de la tabla son "defaultValue" (no controlados) y usan esto como
   // key para mostrar el valor nuevo después de editar en el modal.
   const [versionTabla, setVersionTabla] = useState(0);
+  const [menuAbiertoId, setMenuAbiertoId] = useState(null);
 
   // --- Ofertas ---
   const [ofertaProducto, setOfertaProducto] = useState(null); // producto con la ventana de oferta abierta
@@ -1308,10 +1310,11 @@ export default function Productos() {
           <div className="loading">Cargando...</div>
         ) : (
           <>
-            <table className="simple-table">
+            <div className="tabla-scroll">
+            <table className="simple-table tabla-productos">
               <thead>
                 <tr>
-                  <th>
+                  <th style={{ width: 28 }}>
                     <input
                       type="checkbox"
                       checked={productosVisibles.length > 0 && productosVisibles.every((p) => seleccionados.has(p.id))}
@@ -1319,18 +1322,16 @@ export default function Productos() {
                       title="Seleccionar todos (esta página)"
                     />
                   </th>
-                  <th>Código</th>
-                  <th>Descripción</th>
-                  <th>Categoría</th>
-                  <th>Stock</th>
-                  <th>Costo final</th>
-                  <th>Precio</th>
+                  <th>Producto</th>
+                  <th className="num">Stock</th>
+                  <th className="num col-costo">Costo final</th>
+                  <th className="num">Precio</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {productosVisibles.length === 0 && (
-                  <tr><td colSpan={8} className="muted">Sin productos que coincidan</td></tr>
+                  <tr><td colSpan={6} className="muted">Sin productos que coincidan</td></tr>
                 )}
                 {productosVisibles.map((p) => (
                   <Fragment key={p.id}>
@@ -1339,36 +1340,44 @@ export default function Productos() {
                       <input type="checkbox" checked={seleccionados.has(p.id)} onChange={() => toggleSeleccionado(p.id)} />
                     </td>
                     <td>
-                      <input
-                        key={`codigo-${versionTabla}`}
-                        className="input-inline"
-                        defaultValue={p.codigo || ''}
-                        onBlur={(e) => guardarCampo(p.id, 'codigo', e.target.value)}
-                        style={{ width: 90 }}
-                      />
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <Miniatura productoId={p.id} cantidadImagenes={p.cantidad_imagenes} tam={30} descripcion={p.descripcion} />
-                      <input
-                        key={`descripcion-${versionTabla}`}
-                        className="input-inline"
-                        defaultValue={p.descripcion || ''}
-                        onBlur={(e) => guardarCampo(p.id, 'descripcion', e.target.value)}
-                        style={{ width: '100%', minWidth: 280 }}
-                      />
+                      <div className="prod-celda">
+                        <Miniatura productoId={p.id} cantidadImagenes={p.cantidad_imagenes} tam={44} descripcion={p.descripcion} onSinImagen={() => abrirEditar(p)} />
+                        <div className="prod-info">
+                          <TextareaAuto
+                            key={`descripcion-${versionTabla}`}
+                            className="input-inline prod-descripcion"
+                            defaultValue={p.descripcion || ''}
+                            onBlur={(e) => { if (e.target.value !== (p.descripcion || '')) guardarCampo(p.id, 'descripcion', e.target.value); }}
+                          />
+                          <div className="prod-meta">
+                            <span>Cód.</span>
+                            <input
+                              key={`codigo-${versionTabla}`}
+                              className="input-inline"
+                              defaultValue={p.codigo || ''}
+                              placeholder="—"
+                              onBlur={(e) => { if (e.target.value !== (p.codigo || '')) guardarCampo(p.id, 'codigo', e.target.value); }}
+                              style={{ width: 90 }}
+                            />
+                            <span>·</span>
+                            <input
+                              key={`categoria-${versionTabla}`}
+                              className="input-inline"
+                              defaultValue={p.categoria || ''}
+                              placeholder="Sin categoría"
+                              onBlur={(e) => { if (e.target.value.toUpperCase() !== (p.categoria || '').toUpperCase()) guardarCampo(p.id, 'categoria', e.target.value); }}
+                              style={{ width: 140 }}
+                            />
+                            {ofertaVigente(p) && (
+                              <span title={textoOferta(p, labelMetodo, formatoMoneda)}>
+                                <span className="badge-oferta">OFERTA</span> {formatoMoneda(Number(p.oferta_precio))}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                     </td>
-                    <td>
-                      <input
-                        key={`categoria-${versionTabla}`}
-                        className="input-inline"
-                        defaultValue={p.categoria || ''}
-                        onBlur={(e) => guardarCampo(p.id, 'categoria', e.target.value)}
-                        style={{ width: 120 }}
-                      />
-                    </td>
-                    <td>
+                    <td className="num">
                       <input
                         key={`stock-${versionTabla}`}
                         type="text" inputMode="decimal"
@@ -1376,48 +1385,62 @@ export default function Productos() {
                         defaultValue={p.stock ?? ''}
                         onChange={(e) => actualizarLocal(p.id, 'stock', e.target.value)}
                         onBlur={(e) => guardarCampo(p.id, 'stock', parseNumero(e.target.value) ?? 0)}
-                        style={{ width: 70 }}
+                        style={{ width: 58, textAlign: 'right' }}
                         title={Number(p.stock) <= 0 ? 'Sin stock' : Number(p.stock) <= 3 ? 'Stock bajo' : undefined}
                       />
                     </td>
-                    <td>
+                    <td className="num col-costo">
                       {p.costo_final_ars == null ? <span className="muted">—</span> : formatoMoneda(p.costo_final_ars)}
                     </td>
-                    <td>
+                    <td className="num">
                       {p.precio == null ? (
-                        <span className="muted">Sin costo/precio</span>
+                        <span className="muted">Sin precio</span>
                       ) : (
                         <>
-                          {formatoMoneda(p.precio)}
+                          <strong>{formatoMoneda(p.precio)}</strong>
                           {p.precio_lista != null && (
                             <div className="muted" style={{ fontSize: 11 }} title="Precio de lista (Point débito): el que se cobra en ventas antes del descuento/recargo de la forma de pago">
-                              Lista: {formatoMoneda(p.precio_lista)}
+                              Lista {formatoMoneda(p.precio_lista)}
                             </div>
                           )}
                         </>
                       )}
-                      {ofertaVigente(p) && (
-                        <div style={{ fontSize: 11 }} title={textoOferta(p, labelMetodo, formatoMoneda)}>
-                          <span className="badge-oferta">OFERTA</span> {formatoMoneda(Number(p.oferta_precio))}
-                        </div>
-                      )}
                     </td>
-                    <td style={{ whiteSpace: 'nowrap' }}>
-                      <button type="button" onClick={() => abrirEditar(p)} className="btn-link">
-                        {detalleAbiertoId === p.id ? 'Cerrar' : 'Editar'}
-                      </button>
-                      {' · '}
-                      <button type="button" onClick={() => setOfertaProducto(p)} className="btn-link">Oferta</button>
-                      {' · '}
-                      <button type="button" onClick={() => eliminarProducto(p.id)} disabled={eliminandoId === p.id} className="btn-link-danger">
-                        {eliminandoId === p.id ? 'Eliminando...' : 'Eliminar'}
-                      </button>
+                    <td>
+                      <div className="celda-acciones">
+                        <button type="button" onClick={() => abrirEditar(p)} className="btn-link">Editar</button>
+                        <div className="menu-acciones">
+                          <button
+                            type="button"
+                            className="btn-link menu-acciones-toggle"
+                            onClick={() => setMenuAbiertoId((m) => (m === p.id ? null : p.id))}
+                            aria-label="Más acciones"
+                          >
+                            ⋯
+                          </button>
+                          {menuAbiertoId === p.id && (
+                            <>
+                              <div className="menu-acciones-fondo" onClick={() => setMenuAbiertoId(null)} />
+                              <div className="menu-acciones-lista">
+                                <button type="button" onClick={() => { setMenuAbiertoId(null); setOfertaProducto(p); }}>
+                                  {Number(p.oferta_precio) > 0 ? 'Editar oferta' : 'Nueva oferta'}
+                                </button>
+                                <button type="button" onClick={() => { setMenuAbiertoId(null); abrirEditar(p); }}>Imágenes</button>
+                                <button type="button" className="danger" disabled={eliminandoId === p.id} onClick={() => { setMenuAbiertoId(null); eliminarProducto(p.id); }}>
+                                  {eliminandoId === p.id ? 'Eliminando...' : 'Eliminar'}
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
                     </td>
                   </tr>
                   </Fragment>
                 ))}
               </tbody>
             </table>
+            </div>
 
             <div className="paginacion-bar">
               <span className="muted" style={{ fontSize: 13 }}>{total} producto{total === 1 ? '' : 's'}</span>

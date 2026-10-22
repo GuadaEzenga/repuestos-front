@@ -8,6 +8,7 @@ import FacturacionForm from '../components/FacturacionForm';
 import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
 import { precioListaProducto, ofertaVigente, textoOferta } from '../utils/ofertas';
 import Miniatura from '../components/Miniatura';
+import { lineasCarritoDesdeItems } from '../utils/kits';
 
 function formatoMoneda(valor) {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(valor || 0);
@@ -268,15 +269,7 @@ export default function NuevaVenta() {
   // el precio se recalcula con la configuración actual, como cualquier venta.
   async function cargarDesdePresupuesto(presupuestoId) {
     const detalle = await api.get(`/presupuestos/${presupuestoId}`);
-    const lineasNuevas = detalle.items.map((it) => ({
-      kind: 'producto',
-      id: it.producto_id,
-      codigo: productosPorId[it.producto_id]?.codigo || '',
-      descripcion: it.descripcion,
-      cantidad: Number(it.cantidad),
-      precioEstimado: (productosPorId[it.producto_id]?.precio_lista ?? productosPorId[it.producto_id]?.precio) ?? Number(it.precio_unitario),
-      descuentoPct: Number(it.ajuste_pct) || 0,
-    }));
+    const lineasNuevas = lineasCarritoDesdeItems(detalle.items, productosPorId);
     setCarrito((prev) => [...prev, ...lineasNuevas]);
     setPresupuestoCargado(detalle.numero);
     setPresupuestoYaFacturado(!!detalle.afip_cae);
@@ -437,7 +430,7 @@ export default function NuevaVenta() {
   }
 
   function itemsParaEnviar() {
-    return carrito.flatMap((l) => {
+    return carrito.flatMap((l, idx) => {
       if (l.kind === 'grupo') {
         // Si el kit no se tocó, se manda como grupo_id (igual que siempre).
         // Si se modificó (se sacó o cambió la cantidad de algún producto), se
@@ -445,10 +438,13 @@ export default function NuevaVenta() {
         if (!l.modificado) {
           return [{ grupo_id: l.id, cantidad: cantidadNum(l), descuento_pct: Number(l.descuentoPct) || 0 }];
         }
+        // Igual se manda a qué kit pertenece cada producto, para que en el
+        // comprobante/factura salga como una sola línea con el nombre del kit.
         return l.componentes.map((c) => ({
           producto_id: c.producto_id,
           cantidad: c.cantidadPorGrupo * cantidadNum(l),
           descuento_pct: Number(l.descuentoPct) || 0,
+          kit: { grupo_id: l.id || null, nombre: l.descripcion, cantidad: cantidadNum(l), clave: idx },
         }));
       }
       return [{ producto_id: l.id, cantidad: cantidadNum(l), descuento_pct: Number(l.descuentoPct) || 0 }];

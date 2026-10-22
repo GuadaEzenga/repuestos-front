@@ -31,7 +31,7 @@ export function achicarImagen(archivo, maxLado, calidad = 0.8) {
 export async function prepararImagen(archivo) {
   const [imagen, miniatura] = await Promise.all([
     achicarImagen(archivo, 1000, 0.8),
-    achicarImagen(archivo, 160, 0.7),
+    achicarImagen(archivo, 320, 0.75),
   ]);
   return { imagen, miniatura };
 }

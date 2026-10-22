@@ -7,6 +7,7 @@ import FacturacionForm from '../components/FacturacionForm';
 import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
 import { precioListaProducto, ofertaVigente, textoOferta } from '../utils/ofertas';
 import Miniatura from '../components/Miniatura';
+import { lineasCarritoDesdeItems } from '../utils/kits';
 const PAGE_SIZE = 30;
 
 function formatoMoneda(valor) {
@@ -155,14 +156,7 @@ export default function Presupuestos() {
     await cargarDatosCarrito();
     const detalle = await api.get(`/presupuestos/${p.id}`);
     setEditandoId(p.id);
-    setCarrito(detalle.items.map((it) => ({
-      kind: 'producto',
-      id: it.producto_id,
-      descripcion: it.descripcion,
-      cantidad: Number(it.cantidad),
-      precioEstimado: Number(it.precio_original ?? it.precio_unitario),
-      descuentoPct: Number(it.ajuste_pct) || 0,
-    })));
+    setCarrito(lineasCarritoDesdeItems(detalle.items, productosPorId));
     setExpandido({});
     setLineasSeleccionadas(new Set());
     setDescuentoLote('');
@@ -417,15 +411,18 @@ export default function Presupuestos() {
   }
 
   function itemsParaEnviar() {
-    return carrito.flatMap((l) => {
+    return carrito.flatMap((l, idx) => {
       if (l.kind === 'grupo') {
         if (!l.modificado) {
           return [{ grupo_id: l.id, cantidad: cantidadNum(l), descuento_pct: Number(l.descuentoPct) || 0 }];
         }
+        // Igual se manda a qué kit pertenece cada producto, para que en el
+        // comprobante/factura salga como una sola línea con el nombre del kit.
         return l.componentes.map((c) => ({
           producto_id: c.producto_id,
           cantidad: c.cantidadPorGrupo * cantidadNum(l),
           descuento_pct: Number(l.descuentoPct) || 0,
+          kit: { grupo_id: l.id || null, nombre: l.descripcion, cantidad: cantidadNum(l), clave: idx },
         }));
       }
       return [{ producto_id: l.id, cantidad: cantidadNum(l), descuento_pct: Number(l.descuentoPct) || 0 }];
