@@ -212,6 +212,8 @@ export default function Presupuestos() {
     if (!buscadorEnfocado) return [];
     const hayQuery = busqueda.trim() !== '';
     const prods = productos
+      // Los productos sin stock no aparecen en la búsqueda.
+      .filter((p) => Number(p.stock) > 0)
       .filter((p) => !hayQuery || coincideTexto(`${p.codigo || ''} ${p.descripcion || ''}`, busqueda))
       .map((p) => ({ kind: 'producto', id: p.id, codigo: p.codigo, descripcion: p.descripcion, precio: p.precio_lista ?? p.precio, stock: p.stock, cantidad_imagenes: p.cantidad_imagenes, oferta: textoOferta(p, labelMetodo, formatoMoneda) }));
     const grps = grupos
