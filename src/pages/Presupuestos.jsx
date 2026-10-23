@@ -71,6 +71,10 @@ export default function Presupuestos() {
   const [cuotas, setCuotas] = useState(1);
   const [notas, setNotas] = useState('');
   const [titulo, setTitulo] = useState('');
+  // Total final escrito a mano (vacío = el calculado).
+  const [totalManual, setTotalManual] = useState('');
+  // Kits en el comprobante: false = solo nombre y precio del kit.
+  const [detalleKits, setDetalleKits] = useState(false);
   // Seleccion multiple en el historial, para dar de baja varios a la vez.
   const [seleccionados, setSeleccionados] = useState(new Set());
   const [eliminandoLote, setEliminandoLote] = useState(false);
@@ -144,6 +148,8 @@ export default function Presupuestos() {
     setBusquedaCliente('');
     setNotas('');
     setTitulo('');
+    setTotalManual('');
+    setDetalleKits(false);
     setMetodoPago('efectivo');
     setCuotas(1);
     setErrorForm(null);
@@ -169,6 +175,8 @@ export default function Presupuestos() {
     setBusquedaCliente('');
     setNotas(p.notas || '');
     setTitulo(p.titulo || '');
+    setDetalleKits(!!p.detalle_kits);
+    setTotalManual(p.total_calculado != null ? String(Number(p.total)).replace('.', ',') : '');
     setMetodoPago(p.metodo_pago || 'efectivo');
     setCuotas(p.cuotas || 1);
     setErrorForm(null);
@@ -405,6 +413,10 @@ export default function Presupuestos() {
   const calculo = calcularTotalVenta({ subtotal: subtotalEstimado, metodo: metodoPago, esTecnico, config, cuotas: esMetodoCredito(metodoPago) ? cuotas : 1 });
   const { ajustePct, montoAjuste } = calculo;
   const totalEstimado = calculo.total;
+  const totalManualNum = (() => {
+    const n = parseNumero(totalManual);
+    return n != null && n > 0 ? n : null;
+  })();
 
   function buscarClientes(texto) {
     setBusquedaCliente(texto);
@@ -484,6 +496,8 @@ export default function Presupuestos() {
       cuotas: esMetodoCredito(metodoPago) ? cuotas : null,
       notas: notas || null,
       titulo: titulo.trim() || null,
+      total_manual: parseNumero(totalManual),
+      detalle_kits: detalleKits,
     };
   }
 
@@ -781,6 +795,14 @@ export default function Presupuestos() {
               </tbody>
             </table>
 
+            {carrito.some((l) => l.kind === 'grupo') && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 10 }}>
+                <input type="checkbox" checked={detalleKits} onChange={(e) => setDetalleKits(e.target.checked)} />
+                Mostrar en el comprobante los productos que incluye cada kit
+                <span className="muted" style={{ fontSize: 11 }}>(si no, sale solo el nombre del kit y su precio)</span>
+              </label>
+            )}
+
             {lineasSeleccionadas.size > 0 && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
                 <span className="muted" style={{ fontSize: 12 }}>
@@ -809,7 +831,35 @@ export default function Presupuestos() {
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
                 )}
-                <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
+                <div className="resumen-linea total"><span>{totalManualNum != null ? 'Total calculado' : 'Total estimado'}</span><span>{formatoMoneda(totalEstimado)}</span></div>
+                {totalManualNum != null && Math.abs(totalManualNum - totalEstimado) >= 0.01 && (
+                  <>
+                    <div className={`resumen-linea ${totalManualNum < totalEstimado ? 'descuento' : ''}`}>
+                      <span>{totalManualNum < totalEstimado ? 'Bonificación especial' : 'Ajuste de precio'}</span>
+                      <span>{totalManualNum > totalEstimado ? '+' : ''}{formatoMoneda(totalManualNum - totalEstimado)}</span>
+                    </div>
+                    <div className="resumen-linea total"><span>Total final</span><span>{formatoMoneda(totalManualNum)}</span></div>
+                  </>
+                )}
+                <div style={{ marginTop: 10 }}>
+                  <label className="muted" style={{ fontSize: 12 }}>Total final a mano (vacío = usa el calculado)</label>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      placeholder={String(totalEstimado).replace('.', ',')}
+                      value={totalManual}
+                      onChange={(e) => setTotalManual(e.target.value)}
+                      style={{ flex: 1 }}
+                    />
+                    {totalManual && <button type="button" className="btn-secondary" onClick={() => setTotalManual('')}>Quitar</button>}
+                  </div>
+                  {totalManualNum != null && (
+                    <p className="muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
+                      Queda fijo aunque cambies productos o forma de pago. En el PDF la diferencia sale como "{totalManualNum < totalEstimado ? 'Bonificación especial' : 'Ajuste de precio'}".
+                    </p>
+                  )}
+                </div>
               </div>
             )}
           </div>

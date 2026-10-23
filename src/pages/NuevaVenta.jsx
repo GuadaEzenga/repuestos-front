@@ -73,6 +73,8 @@ export default function NuevaVenta() {
   const [montoRecibido, setMontoRecibido] = useState('');
   const [notas, setNotas] = useState('');
   const [totalManual, setTotalManual] = useState('');
+  // Kits en el comprobante: false = solo nombre y precio del kit.
+  const [detalleKits, setDetalleKits] = useState(false);
 
   const [guardando, setGuardando] = useState(false);
   const [errorVenta, setErrorVenta] = useState(null);
@@ -273,6 +275,15 @@ export default function NuevaVenta() {
     setCarrito((prev) => [...prev, ...lineasNuevas]);
     setPresupuestoCargado(detalle.numero);
     setPresupuestoYaFacturado(!!detalle.afip_cae);
+    setDetalleKits(!!detalle.detalle_kits);
+    // Presupuesto con total cambiado a mano: se respeta ese total (y la forma
+    // de pago con la que se acordó).
+    if (detalle.total_calculado != null) {
+      setTotalManual(String(Number(detalle.total)).replace('.', ','));
+      if (detalle.metodo_pago) setMetodoPago(detalle.metodo_pago);
+      if (detalle.cuotas) setCuotas(Number(detalle.cuotas));
+      toast(`El presupuesto #${detalle.numero} tenía un total acordado a mano: se cargó ${formatoMoneda(Number(detalle.total))} como total final.`, { duration: 6000 });
+    }
     if (detalle.cliente_id) {
       const cliente = clientesTodos.find((c) => String(c.id) === String(detalle.cliente_id));
       if (cliente) setClienteSeleccionado(cliente);
@@ -467,6 +478,7 @@ export default function NuevaVenta() {
         notas: notas || null,
         monto_recibido: metodoPago === 'efectivo' && montoRecibido ? parseNumero(montoRecibido) : null,
         total_manual: parseNumero(totalManual),
+        detalle_kits: detalleKits,
         cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
         facturacion: facturacionVenta.facturacion,
       };
@@ -491,6 +503,7 @@ export default function NuevaVenta() {
         cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
         notas: notas || null,
         titulo: tituloPresupuesto || null,
+        detalle_kits: detalleKits,
       });
       nuevaVentaLimpia();
       setPresupuestoGuardado(presupuesto);
@@ -531,6 +544,7 @@ export default function NuevaVenta() {
     setMontoRecibido('');
     setNotas('');
     setTotalManual('');
+    setDetalleKits(false);
     setVentaCreada(null);
     setErrorVenta(null);
     setResultadoFactura(null);
@@ -823,6 +837,14 @@ export default function NuevaVenta() {
                 ))}
               </tbody>
             </table>
+
+            {carrito.some((l) => l.kind === 'grupo') && (
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 10 }}>
+                <input type="checkbox" checked={detalleKits} onChange={(e) => setDetalleKits(e.target.checked)} />
+                Mostrar en el comprobante los productos que incluye cada kit
+                <span className="muted" style={{ fontSize: 11 }}>(si no, sale solo el nombre del kit y su precio)</span>
+              </label>
+            )}
 
             {lineasSeleccionadas.size > 0 && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
