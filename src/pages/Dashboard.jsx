@@ -111,6 +111,7 @@ export default function Dashboard() {
   const [dataAnterior, setDataAnterior] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [verGananciaVentas, setVerGananciaVentas] = useState(false);
 
   async function cargar(desdeParam, hastaParam) {
     setLoading(true);
@@ -172,20 +173,29 @@ export default function Dashboard() {
               <div className="value">{formatoMoneda(data.ingresos)}</div>
               {dataAnterior && <Tendencia actual={data.ingresos} anterior={dataAnterior.ingresos} />}
             </div>
-            <div className={`stat-card tooltip-host ${data.ganancia >= 0 ? 'positive' : 'negative'}`}>
+            <div
+              className={`stat-card tooltip-host stat-card-clickeable ${data.ganancia >= 0 ? 'positive' : 'negative'}`}
+              onClick={() => setVerGananciaVentas(true)}
+              title="Ver la ganancia de cada venta"
+            >
               <div className="stat-card-top">
                 <div className="label">Ganancia</div>
                 <span className="stat-icon">{ICONOS_STAT.ganancia}</span>
               </div>
               <div className="value">{formatoMoneda(data.ganancia)}</div>
               {dataAnterior && <Tendencia actual={data.ganancia} anterior={dataAnterior.ganancia} />}
-              <div className="tooltip-panel">
-                <div style={{ maxWidth: 240, whiteSpace: 'normal', fontSize: 12 }}>
-                  Suma de lo que ganás con el margen que le ponés a cada producto vendido (sin contar descuentos, recargos ni comisiones).
-                  {data.desglose_ganancia?.lineas_estimadas > 0 && <div className="muted" style={{ marginTop: 6 }}>{data.desglose_ganancia.lineas_estimadas} producto(s) vendidos antes del cambio usan el margen de hoy.</div>}
-                  {data.desglose_ganancia?.lineas_precio_manual > 0 && <div className="muted" style={{ marginTop: 6 }}>Incluye {data.desglose_ganancia.lineas_precio_manual} producto(s) con precio manual: como no tienen costo, todo su precio cuenta como ganancia (no entran en el margen promedio).</div>}
+              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Ver por venta →</div>
+              {data.desglose_ganancia?.ingresos != null && (
+                <div className="tooltip-panel">
+                  <div className="tooltip-fila"><span>Cobrado</span><span>{formatoMoneda(data.desglose_ganancia.ingresos)}</span></div>
+                  <div className="tooltip-fila"><span>− Mercado Pago</span><span>{formatoMoneda(data.desglose_ganancia.comisiones)}</span></div>
+                  <div className="tooltip-fila"><span>− Costo de lo vendido</span><span>{formatoMoneda(data.desglose_ganancia.costo)}</span></div>
+                  <div className="tooltip-separador" />
+                  <div className="tooltip-fila tooltip-total"><span>Ganancia</span><span>{formatoMoneda(data.ganancia)}</span></div>
+                  {data.desglose_ganancia.lineas_estimadas > 0 && <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>{data.desglose_ganancia.lineas_estimadas} producto(s) vendidos antes del cambio usan el margen de hoy.</div>}
+                  {data.desglose_ganancia.lineas_precio_manual > 0 && <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>{data.desglose_ganancia.lineas_precio_manual} producto(s) con precio manual: sin costo, todo es ganancia.</div>}
                 </div>
-              </div>
+              )}
             </div>
             <div className={`stat-card ${data.margen_promedio != null ? (data.margen_promedio >= 0 ? 'positive' : 'negative') : ''}`}>
               <div className="stat-card-top">
@@ -324,6 +334,60 @@ export default function Dashboard() {
             </div>
           </div>
         </>
+      )}
+
+      {verGananciaVentas && data && (
+        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setVerGananciaVentas(false); }}>
+          <div className="modal-ventana" style={{ maxWidth: 900 }}>
+            <div className="modal-header">
+              <h2>Ganancia por venta</h2>
+              <button type="button" className="modal-cerrar" onClick={() => setVerGananciaVentas(false)} aria-label="Cerrar">×</button>
+            </div>
+            <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
+              Del {data.desde.split('-').reverse().join('/')} al {data.hasta.split('-').reverse().join('/')}. Ganancia = lo cobrado (con el descuento o recargo de su forma de pago y de técnico) − lo que se queda Mercado Pago − el costo de lo vendido.
+            </p>
+            {(data.ventas_ganancia || []).length === 0 ? (
+              <p className="muted">No hay ventas en el período.</p>
+            ) : (
+              <div className="tabla-scroll">
+                <table className="simple-table">
+                  <thead>
+                    <tr>
+                      <th>Venta</th><th>Fecha</th><th>Cliente</th><th>Forma de pago</th>
+                      <th className="num">Cobrado</th><th className="num">Mercado Pago</th><th className="num">Costo</th>
+                      <th className="num">Ganancia</th><th className="num">Margen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.ventas_ganancia.map((v) => (
+                      <tr key={v.id}>
+                        <td>#{v.numero}</td>
+                        <td>{new Date(v.fecha).toLocaleDateString('es-AR')}</td>
+                        <td>{v.cliente ? <>{v.cliente} <span className="muted" style={{ fontSize: 11 }}>(técnico)</span></> : <span className="muted">Público</span>}</td>
+                        <td>{labelMetodo(v.metodo_pago)}{v.cuotas > 1 ? ` · ${v.cuotas} cuotas` : ''}</td>
+                        <td className="num">{formatoMoneda(v.total)}</td>
+                        <td className="num">{v.comision ? `−${formatoMoneda(v.comision)}` : '—'}</td>
+                        <td className="num">−{formatoMoneda(v.costo)}</td>
+                        <td className="num"><span className={v.ganancia >= 0 ? 'texto-positivo' : 'texto-negativo'}>{formatoMoneda(v.ganancia)}</span></td>
+                        <td className="num">{v.margen_pct != null ? `${v.margen_pct.toFixed(1)}%` : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ fontWeight: 700 }}>
+                      <td colSpan={4}>Total ({data.ventas_ganancia.length} venta{data.ventas_ganancia.length === 1 ? '' : 's'})</td>
+                      <td className="num">{formatoMoneda(data.desglose_ganancia.ingresos)}</td>
+                      <td className="num">−{formatoMoneda(data.desglose_ganancia.comisiones)}</td>
+                      <td className="num">−{formatoMoneda(data.desglose_ganancia.costo)}</td>
+                      <td className="num">{formatoMoneda(data.ganancia)}</td>
+                      <td className="num">{data.margen_promedio != null ? `${Number(data.margen_promedio).toFixed(1)}%` : '—'}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );

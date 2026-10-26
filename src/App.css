@@ -1248,3 +1248,5 @@ textarea, select {
   border: 1px solid var(--border);
   font-size: 14px;
 }
+.stat-card-clickeable { cursor: pointer; }
+.stat-card-clickeable:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08); }
