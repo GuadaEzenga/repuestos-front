@@ -5,7 +5,7 @@ import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
 import FacturacionForm from '../components/FacturacionForm';
 import { METODOS_PAGO, calcularTotalVenta, esMetodoCredito, labelMetodo, opcionesCuotas, formatoPct } from '../utils/pagos';
-import { precioListaProducto, ofertaVigente, textoOferta } from '../utils/ofertas';
+import { precioListaProducto, textoOferta, aplicaOferta } from '../utils/ofertas';
 import Miniatura from '../components/Miniatura';
 import { lineasCarritoDesdeItems } from '../utils/kits';
 const PAGE_SIZE = 30;
@@ -201,9 +201,11 @@ export default function Presupuestos() {
     }
     return precioUnitarioProducto(l.id, l.precioEstimado);
   }
+  // OFERTA en el carrito solo si de verdad se aplica (es más barata que el
+  // precio normal para este cliente y forma de pago).
   function lineaEnOferta(l) {
-    if (l.kind === 'grupo') return (l.componentes || []).some((c) => ofertaVigente(productosPorId[c.producto_id]));
-    return !!ofertaVigente(productosPorId[l.id]);
+    if (l.kind === 'grupo') return (l.componentes || []).some((c) => aplicaOferta(productosPorId[c.producto_id], config, contextoPrecio));
+    return aplicaOferta(productosPorId[l.id], config, contextoPrecio);
   }
 
   // Busqueda igual que el programa original: aparece apenas se hace foco, y

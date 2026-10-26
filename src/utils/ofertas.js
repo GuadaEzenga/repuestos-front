@@ -48,9 +48,20 @@ export function precioListaOferta(producto, config, { metodo, esTecnico = false,
 // tiene una vigente, si no el precio de lista normal.
 export function precioListaProducto(producto, config, contexto) {
   if (!producto) return null;
+  const normal = producto.precio_lista ?? producto.precio ?? null;
   const oferta = config ? precioListaOferta(producto, config, contexto) : null;
-  if (oferta != null) return oferta;
-  return producto.precio_lista ?? producto.precio ?? null;
+  // La oferta solo se aplica si es más barata que el precio normal para ese
+  // cliente y forma de pago (igual que el backend).
+  if (oferta != null && (normal == null || oferta < Number(normal))) return oferta;
+  return normal;
+}
+
+// ¿Se le aplica la oferta a este cliente con esta forma de pago?
+export function aplicaOferta(producto, config, contexto) {
+  if (!producto || !config) return false;
+  const normal = producto.precio_lista ?? producto.precio ?? null;
+  const oferta = precioListaOferta(producto, config, contexto);
+  return oferta != null && (normal == null || oferta < Number(normal));
 }
 
 // Texto corto para mostrar la oferta: "$1.500 en Efectivo y Transferencia (hasta 31/10)"
