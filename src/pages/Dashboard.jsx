@@ -9,8 +9,9 @@ import { labelMetodo } from '../utils/pagos';
 
 const COLORES = ['#166e79', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0d2035'];
 
+// Hoy en horario de Argentina (antes era UTC: después de las 21 hs daba mañana).
 function hoyISO() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Cordoba' });
 }
 
 // 30 días atrás (en horario local, no UTC, para que no se corra un día
@@ -171,13 +172,29 @@ export default function Dashboard() {
               <div className="value">{formatoMoneda(data.ingresos)}</div>
               {dataAnterior && <Tendencia actual={data.ingresos} anterior={dataAnterior.ingresos} />}
             </div>
-            <div className={`stat-card ${data.ganancia >= 0 ? 'positive' : 'negative'}`}>
+            <div className={`stat-card tooltip-host ${data.ganancia >= 0 ? 'positive' : 'negative'}`}>
               <div className="stat-card-top">
-                <div className="label">Ganancia</div>
+                <div className="label">Ganancia real</div>
                 <span className="stat-icon">{ICONOS_STAT.ganancia}</span>
               </div>
               <div className="value">{formatoMoneda(data.ganancia)}</div>
               {dataAnterior && <Tendencia actual={data.ganancia} anterior={dataAnterior.ganancia} />}
+              {data.desglose_ganancia && (
+                <div className="tooltip-panel">
+                  <div className="tooltip-fila"><span>Ventas</span><span>{formatoMoneda(data.desglose_ganancia.ingresos)}</span></div>
+                  <div className="tooltip-fila"><span>− IVA (facturado)</span><span>{formatoMoneda(data.desglose_ganancia.iva)}</span></div>
+                  <div className="tooltip-fila"><span>− Mercado Pago</span><span>{formatoMoneda(data.desglose_ganancia.comisiones)}</span></div>
+                  <div className="tooltip-fila"><span>− Costo de lo vendido</span><span>{formatoMoneda(data.desglose_ganancia.costo_vendido)}</span></div>
+                  <div className="tooltip-separador" />
+                  <div className="tooltip-fila tooltip-total"><span>Ganancia</span><span>{formatoMoneda(data.ganancia)}</span></div>
+                  {(data.desglose_ganancia.lineas_costo_estimado > 0 || data.desglose_ganancia.lineas_sin_costo > 0) && (
+                    <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>
+                      {data.desglose_ganancia.lineas_costo_estimado > 0 && `${data.desglose_ganancia.lineas_costo_estimado} producto(s) vendidos antes del cambio usan el costo de hoy (estimado). `}
+                      {data.desglose_ganancia.lineas_sin_costo > 0 && `${data.desglose_ganancia.lineas_sin_costo} producto(s) sin costo cargado no restan costo.`}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <div className={`stat-card ${data.ingresos > 0 && data.ganancia >= 0 ? 'positive' : data.ingresos > 0 ? 'negative' : ''}`}>
               <div className="stat-card-top">
@@ -203,16 +220,12 @@ export default function Dashboard() {
               {dataAnterior && <Tendencia actual={data.neto} anterior={dataAnterior.neto} />}
               <div className="tooltip-panel">
                 <div className="tooltip-fila">
-                  <span>Ingresos</span>
-                  <span>{formatoMoneda(data.ingresos)}</span>
+                  <span>Ganancia real</span>
+                  <span>{formatoMoneda(data.ganancia)}</span>
                 </div>
                 <div className="tooltip-fila">
-                  <span>− Gastos</span>
-                  <span>
-                    {formatoMoneda(
-                      data.dona_gastos_por_tipo.reduce((acc, g) => acc + Number(g.total || 0), 0)
-                    )}
-                  </span>
+                  <span>− Gastos (sin compras de stock)</span>
+                  <span>{formatoMoneda(data.gastos_operativos ?? 0)}</span>
                 </div>
                 <div className="tooltip-separador" />
                 <div className="tooltip-fila tooltip-total">

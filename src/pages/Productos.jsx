@@ -198,6 +198,8 @@ export default function Productos() {
   const [restockForm, setRestockForm] = useState(RESTOCK_VACIO);
   const [guardandoRestock, setGuardandoRestock] = useState(false);
   const [errorRestock, setErrorRestock] = useState(null);
+  // Si el lote nuevo sale más barato: mantener el precio de venta actual (por defecto sí).
+  const [mantenerPrecio, setMantenerPrecio] = useState(true);
 
   // --- Actualizacion masiva de margen de ganancia ---
   const [mostrarMargenMasivo, setMostrarMargenMasivo] = useState(false);
@@ -533,7 +535,9 @@ export default function Productos() {
         envio_pct: parseNumero(restockForm.envio_pct),
         iva_pct: parseNumero(restockForm.iva_pct),
         margen_venta_pct: parseNumero(restockForm.margen_venta_pct),
+        mantener_precio: mantenerPrecio,
       });
+      setMantenerPrecio(true);
       setProductosCompletos((prev) => prev.map((p) => (p.id === resultado.id ? { ...p, ...resultado } : p)));
       toast(resultado.mensaje || 'Restock registrado ✓', { duration: 5000 });
       setRestockForm(RESTOCK_VACIO);
@@ -1062,29 +1066,62 @@ export default function Productos() {
                   </div>
 
                   {/* --- Resumen --- */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, marginBottom: 20 }}>
-                    <div style={{ minWidth: 220 }}>
-                      <p style={{ margin: '0 0 6px', fontWeight: 600 }}>Resumen</p>
-                      <p style={{ margin: '2px 0' }}>Costo final: <strong>{detalleData.costo_unitario_ars != null ? formatoMoneda(detalleData.costo_unitario_ars) : '—'}</strong></p>
-                      <p style={{ margin: '2px 0' }}>Precio de venta: <strong>{detalleData.precio_ars != null ? formatoMoneda(detalleData.precio_ars) : '—'}</strong></p>
-                      <p style={{ margin: '2px 0' }}>Stock: <strong>{detalleData.stock}</strong></p>
-                      <p style={{ margin: '2px 0' }}>Cantidad vendida (histórico): <strong>{detalleData.cantidad_vendida}</strong></p>
+                  <div className="detalle-cards">
+                    <div className="detalle-card">
+                      <span>Precio de venta</span>
+                      <strong>{detalleData.precio_ars != null ? formatoMoneda(detalleData.precio_ars) : '—'}</strong>
+                      <small>Lista {detalleData.precio_lista_ars != null ? formatoMoneda(detalleData.precio_lista_ars) : '—'}</small>
                     </div>
-                    <div style={{ minWidth: 220 }}>
-                      <p style={{ margin: '0 0 6px', fontWeight: 600 }}>En USD (solo acá)</p>
-                      <p style={{ margin: '2px 0' }}>Cotización dólar hoy: <strong>{detalleData.cotizacion_dolar ? formatoMoneda(detalleData.cotizacion_dolar) : '—'}</strong></p>
-                      <p style={{ margin: '2px 0' }}>Costo unitario: <strong>{detalleData.costo_unitario_usd != null ? formatoMoneda(detalleData.costo_unitario_usd, 'USD') : '—'}</strong></p>
+                    <div className="detalle-card">
+                      <span>Costo hoy (por unidad)</span>
+                      <strong>{detalleData.costo_unitario_ars != null ? formatoMoneda(detalleData.costo_unitario_ars) : '—'}</strong>
+                      <small>{detalleData.costo_unitario_usd != null ? `${formatoMoneda(detalleData.costo_unitario_usd, 'USD')} · dólar ${formatoMoneda(detalleData.cotizacion_dolar)}` : 'Sin costo cargado'}</small>
+                    </div>
+                    <div className="detalle-card">
+                      <span>Margen actual</span>
+                      <strong>{p.precio_manual_ars != null ? 'Precio manual' : formatoPct(detalleData.margen_actual_pct)}</strong>
+                      <small>{p.margen_venta_pct != null ? 'propio del producto' : 'el general de Configuración'}</small>
+                    </div>
+                    <div className="detalle-card">
+                      <span>Stock</span>
+                      <strong>{detalleData.stock}</strong>
+                      <small>Pagaste {formatoMoneda(detalleData.stock_valorizado_ars)}</small>
+                    </div>
+                    <div className="detalle-card">
+                      <span>Vendidos (total)</span>
+                      <strong>{detalleData.cantidad_vendida}</strong>
+                      <small>&nbsp;</small>
                     </div>
                   </div>
 
                   {/* --- Lotes --- */}
-                  <p style={{ margin: '0 0 8px', fontWeight: 600 }}>Lotes (historial de stock)</p>
+                  <p style={{ margin: '18px 0 4px', fontWeight: 600 }}>Lotes</p>
+                  <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                    "Al cargar" es la foto de cuando entró el lote (no cambia nunca). "Ganancia hoy" compara lo que pagaste por ese lote con el precio de venta actual.
+                  </p>
                   {detalleData.lotes.length === 0 && <p className="muted" style={{ margin: '0 0 14px' }}>Sin lotes registrados.</p>}
                   {detalleData.lotes.length > 0 && (
-                    <div style={{ marginBottom: 20 }}>
-                      {detalleData.lotes.map((l) => (
-                        <div key={l.id} style={{ borderBottom: '1px solid var(--border)', padding: '8px 0' }}>
-                          {loteEditId === l.id ? (
+                    <div className="tabla-scroll" style={{ marginBottom: 18 }}>
+                      <table className="simple-table tabla-lotes">
+                        <thead>
+                          <tr>
+                            <th>Fecha</th>
+                            <th>Quedan</th>
+                            <th className="num">Costo pagado</th>
+                            <th className="num">Al cargar</th>
+                            <th className="num">Ganancia hoy</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {detalleData.lotes.map((l) => {
+                            const quedan = Number(l.cantidad);
+                            const entraron = Number(l.cantidad_original) || quedan;
+                            const pctQuedan = entraron > 0 ? Math.min(100, (quedan / entraron) * 100) : 0;
+                            if (loteEditId === l.id) {
+                              return (
+                                <tr key={l.id}>
+                                  <td colSpan={6}>
                             <div>
                               {errorLote && <div className="error-box">{errorLote}</div>}
                               <div className="form-row" style={{ flexWrap: 'wrap', gap: 10 }}>
@@ -1115,15 +1152,77 @@ export default function Productos() {
                                 ) : null;
                               })()}
                             </div>
-                          ) : (
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                              <span>{l.cantidad} producto{Number(l.cantidad) === 1 ? '' : 's'} · {formatoPct(l.margen_venta_pct)} ganancia · {formatoFecha(l.fecha)}</span>
-                              <button type="button" className="btn-link" onClick={() => abrirEditarLote(l)}>Editar</button>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return (
+                              <tr key={l.id} className={quedan <= 0 ? 'lote-agotado' : ''}>
+                                <td>
+                                  {formatoFecha(l.fecha)}
+                                  <div className="muted" style={{ fontSize: 11 }}>
+                                    {l.tipo === 'ajuste' ? 'Ajuste' : l.tipo === 'recarga' ? 'Recarga' : 'Compra'}
+                                    {l.aproximado && <span className="chip-aprox" title="Lote cargado antes de este cambio: el dólar de compra es estimado (el de cuando se actualizó el sistema).">aprox.</span>}
+                                  </div>
+                                </td>
+                                <td style={{ minWidth: 110 }}>
+                                  <div style={{ fontSize: 13 }}>{quedan <= 0 ? 'Agotado' : `${quedan} de ${entraron}`}</div>
+                                  <div className="barra-lote"><span style={{ width: `${pctQuedan}%` }} /></div>
+                                </td>
+                                <td className="num">
+                                  {l.costo_ars != null ? formatoMoneda(Number(l.costo_ars)) : '—'}
+                                  <div className="muted" style={{ fontSize: 11 }}>
+                                    {formatoMoneda(Number(l.costo_usd), 'USD')}{l.cotizacion != null ? ` · dólar ${formatoMoneda(Number(l.cotizacion))}` : ''}
+                                  </div>
+                                </td>
+                                <td className="num">
+                                  {l.precio_venta_ars != null ? formatoMoneda(Number(l.precio_venta_ars)) : '—'}
+                                  <div className="muted" style={{ fontSize: 11 }}>margen {formatoPct(l.margen_venta_pct)}</div>
+                                </td>
+                                <td className="num">
+                                  {l.ganancia_hoy_pct != null ? (
+                                    <>
+                                      <span className={l.ganancia_hoy_pct >= 0 ? 'texto-positivo' : 'texto-negativo'}>{formatoPct(l.ganancia_hoy_pct)}</span>
+                                      <div className="muted" style={{ fontSize: 11 }}>{formatoMoneda(l.ganancia_hoy_ars)} por unidad</div>
+                                    </>
+                                  ) : '—'}
+                                </td>
+                                <td><button type="button" className="btn-link" onClick={() => abrirEditarLote(l)}>Editar</button></td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
+                  )}
+
+                  {/* --- Últimas ventas --- */}
+                  {detalleData.ventas_recientes?.length > 0 && (
+                    <>
+                      <p style={{ margin: '0 0 4px', fontWeight: 600 }}>Últimas ventas</p>
+                      <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>Ganancia bruta: lo cobrado menos lo que pagaste (antes de IVA y comisiones).</p>
+                      <div className="tabla-scroll" style={{ marginBottom: 18 }}>
+                        <table className="simple-table">
+                          <thead><tr><th>Fecha</th><th>Venta</th><th className="num">Cant.</th><th className="num">Cobrado</th><th className="num">Costo</th><th className="num">Ganancia</th></tr></thead>
+                          <tbody>
+                            {detalleData.ventas_recientes.map((v) => (
+                              <tr key={`${v.venta_id}-${v.cantidad}-${v.cobrado}`}>
+                                <td>{formatoFecha(v.fecha)}</td>
+                                <td>#{v.numero}</td>
+                                <td className="num">{v.cantidad}</td>
+                                <td className="num">{formatoMoneda(v.cobrado)}</td>
+                                <td className="num">{v.costo != null ? formatoMoneda(v.costo) : <span className="muted">—</span>}</td>
+                                <td className="num">
+                                  {v.ganancia != null
+                                    ? <span className={v.ganancia >= 0 ? 'texto-positivo' : 'texto-negativo'}>{formatoMoneda(v.ganancia)}</span>
+                                    : <span className="muted" title="Venta anterior a este cambio: no se guardó el costo">—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   )}
 
                   {/* --- Restock rápido --- */}
@@ -1160,12 +1259,35 @@ export default function Productos() {
                     </button>
                   </div>
                   {(() => {
-                    const preview = previsualizarPrecio(restockForm, configFull, cotizacion);
-                    return preview ? (
-                      <p style={{ fontSize: 14, marginTop: 8, marginBottom: 0 }}>
-                        Precio de venta estimado con este lote: <strong>{formatoMoneda(preview.precio)}</strong>
-                      </p>
-                    ) : null;
+                    // Lo que no se carga en el restock se toma del producto (igual que el backend).
+                    const conValoresDelProducto = {
+                      ...restockForm,
+                      precio_manual_ars: '',
+                      iva_pct: restockForm.iva_pct !== '' ? restockForm.iva_pct : (p.iva_pct != null ? String(p.iva_pct) : ''),
+                      envio_pct: restockForm.envio_pct !== '' ? restockForm.envio_pct : (p.envio_pct != null ? String(p.envio_pct) : ''),
+                      margen_venta_pct: restockForm.margen_venta_pct !== '' ? restockForm.margen_venta_pct : (p.margen_venta_pct != null ? String(p.margen_venta_pct) : ''),
+                    };
+                    const preview = previsualizarPrecio(conValoresDelProducto, configFull, cotizacion);
+                    if (!preview) return null;
+                    const precioActual = detalleData.precio_ars;
+                    const baja = precioActual != null && p.precio_manual_ars == null && preview.precio < precioActual;
+                    const margenParaMantener = baja && preview.costoFinalArs ? (precioActual / preview.costoFinalArs - 1) * 100 : null;
+                    return (
+                      <div className="restock-preview">
+                        <div>Precio actual: <strong>{formatoMoneda(precioActual)}</strong> → con este lote: <strong>{formatoMoneda(preview.precio)}</strong></div>
+                        {baja && (
+                          <label style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: 6 }}>
+                            <input type="checkbox" checked={mantenerPrecio} onChange={(e) => setMantenerPrecio(e.target.checked)} style={{ marginTop: 3 }} />
+                            <span>
+                              Mantener el precio actual ({formatoMoneda(precioActual)})
+                              <span className="muted" style={{ display: 'block', fontSize: 12 }}>
+                                Este lote salió más barato. {mantenerPrecio ? `El margen pasa a ${formatoPct(margenParaMantener)}.` : `El precio baja a ${formatoMoneda(preview.precio)}.`}
+                              </span>
+                            </span>
+                          </label>
+                        )}
+                      </div>
+                    );
                   })()}
                   <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
                     Si dejás IVA/Envío/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
