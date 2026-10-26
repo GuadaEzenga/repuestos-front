@@ -554,12 +554,12 @@ export default function NuevaVenta() {
     setTimeout(() => buscadorRef.current?.focus(), 50);
   }
 
-  async function descargarComprobante() {
-    const blob = await api.get(`/ventas/${ventaCreada.id}/comprobante`);
+  async function descargarComprobante(formato) {
+    const blob = await api.get(`/ventas/${ventaCreada.id}/comprobante`, formato ? { formato } : undefined);
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `comprobante-venta-${ventaCreada.id}.pdf`;
+    a.download = `${formato === 'comprobante' ? 'comprobante' : 'factura'}-venta-${ventaCreada.numero || ventaCreada.id}.pdf`;
     // Safari no dispara la descarga si el link no esta en el DOM.
     document.body.appendChild(a);
     a.click();
@@ -643,8 +643,11 @@ export default function NuevaVenta() {
           </div>
 
           <div className="comprobante-acciones">
-            <button type="button" onClick={descargarComprobante} className="btn-primary">
-              {facturada ? 'Descargar factura PDF' : 'Descargar comprobante'}
+            {facturada && (
+              <button type="button" onClick={() => descargarComprobante()} className="btn-primary">Descargar factura</button>
+            )}
+            <button type="button" onClick={() => descargarComprobante('comprobante')} className={facturada ? 'btn-secondary' : 'btn-primary'}>
+              Descargar comprobante
             </button>
             <button type="button" onClick={nuevaVentaLimpia} className="btn-secondary">Nueva venta</button>
           </div>

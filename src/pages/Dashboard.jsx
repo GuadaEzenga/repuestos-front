@@ -174,41 +174,29 @@ export default function Dashboard() {
             </div>
             <div className={`stat-card tooltip-host ${data.ganancia >= 0 ? 'positive' : 'negative'}`}>
               <div className="stat-card-top">
-                <div className="label">Ganancia real</div>
+                <div className="label">Ganancia</div>
                 <span className="stat-icon">{ICONOS_STAT.ganancia}</span>
               </div>
               <div className="value">{formatoMoneda(data.ganancia)}</div>
               {dataAnterior && <Tendencia actual={data.ganancia} anterior={dataAnterior.ganancia} />}
-              {data.desglose_ganancia && (
-                <div className="tooltip-panel">
-                  <div className="tooltip-fila"><span>Ventas</span><span>{formatoMoneda(data.desglose_ganancia.ingresos)}</span></div>
-                  <div className="tooltip-fila"><span>− IVA (facturado)</span><span>{formatoMoneda(data.desglose_ganancia.iva)}</span></div>
-                  <div className="tooltip-fila"><span>− Mercado Pago</span><span>{formatoMoneda(data.desglose_ganancia.comisiones)}</span></div>
-                  <div className="tooltip-fila"><span>− Costo de lo vendido</span><span>{formatoMoneda(data.desglose_ganancia.costo_vendido)}</span></div>
-                  <div className="tooltip-separador" />
-                  <div className="tooltip-fila tooltip-total"><span>Ganancia</span><span>{formatoMoneda(data.ganancia)}</span></div>
-                  {(data.desglose_ganancia.lineas_costo_estimado > 0 || data.desglose_ganancia.lineas_sin_costo > 0) && (
-                    <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>
-                      {data.desglose_ganancia.lineas_costo_estimado > 0 && `${data.desglose_ganancia.lineas_costo_estimado} producto(s) vendidos antes del cambio usan el costo de hoy (estimado). `}
-                      {data.desglose_ganancia.lineas_sin_costo > 0 && `${data.desglose_ganancia.lineas_sin_costo} producto(s) sin costo cargado no restan costo.`}
-                    </div>
-                  )}
+              <div className="tooltip-panel">
+                <div style={{ maxWidth: 240, whiteSpace: 'normal', fontSize: 12 }}>
+                  Suma de lo que ganás con el margen que le ponés a cada producto vendido (sin contar descuentos, recargos ni comisiones).
+                  {data.desglose_ganancia?.lineas_estimadas > 0 && <div className="muted" style={{ marginTop: 6 }}>{data.desglose_ganancia.lineas_estimadas} producto(s) vendidos antes del cambio usan el margen de hoy.</div>}
+                  {data.desglose_ganancia?.lineas_precio_manual > 0 && <div className="muted" style={{ marginTop: 6 }}>Incluye {data.desglose_ganancia.lineas_precio_manual} producto(s) con precio manual: como no tienen costo, todo su precio cuenta como ganancia (no entran en el margen promedio).</div>}
                 </div>
-              )}
+              </div>
             </div>
-            <div className={`stat-card ${data.ingresos > 0 && data.ganancia >= 0 ? 'positive' : data.ingresos > 0 ? 'negative' : ''}`}>
+            <div className={`stat-card ${data.margen_promedio != null ? (data.margen_promedio >= 0 ? 'positive' : 'negative') : ''}`}>
               <div className="stat-card-top">
                 <div className="label">Margen de ganancia</div>
                 <span className="stat-icon">{ICONOS_STAT.margen}</span>
               </div>
               <div className="value">
-                {data.ingresos > 0 ? `${((data.ganancia / data.ingresos) * 100).toFixed(1)}%` : '—'}
+                {data.margen_promedio != null ? `${Number(data.margen_promedio).toFixed(1)}%` : '—'}
               </div>
-              {dataAnterior && dataAnterior.ingresos > 0 && data.ingresos > 0 && (
-                <Tendencia
-                  actual={(data.ganancia / data.ingresos) * 100}
-                  anterior={(dataAnterior.ganancia / dataAnterior.ingresos) * 100}
-                />
+              {dataAnterior && dataAnterior.margen_promedio != null && data.margen_promedio != null && (
+                <Tendencia actual={data.margen_promedio} anterior={dataAnterior.margen_promedio} />
               )}
             </div>
             <div className={`stat-card tooltip-host ${data.neto >= 0 ? 'positive' : 'negative'}`}>
@@ -220,12 +208,12 @@ export default function Dashboard() {
               {dataAnterior && <Tendencia actual={data.neto} anterior={dataAnterior.neto} />}
               <div className="tooltip-panel">
                 <div className="tooltip-fila">
-                  <span>Ganancia real</span>
-                  <span>{formatoMoneda(data.ganancia)}</span>
+                  <span>Ingresos</span>
+                  <span>{formatoMoneda(data.ingresos)}</span>
                 </div>
                 <div className="tooltip-fila">
-                  <span>− Gastos (sin compras de stock)</span>
-                  <span>{formatoMoneda(data.gastos_operativos ?? 0)}</span>
+                  <span>− Gastos</span>
+                  <span>{formatoMoneda(data.gastos_total ?? data.dona_gastos_por_tipo.reduce((acc, g) => acc + Number(g.total || 0), 0))}</span>
                 </div>
                 <div className="tooltip-separador" />
                 <div className="tooltip-fila tooltip-total">

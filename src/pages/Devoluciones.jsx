@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api/client';
-import { labelMetodo } from '../utils/pagos';
+import { labelMetodo, METODOS_PAGO, porcentajeSobreLista } from '../utils/pagos';
+import { precioListaProducto } from '../utils/ofertas';
 import { parseNumero } from '../utils/numero';
 
 const PAGE_SIZE = 30;
@@ -35,6 +36,8 @@ export default function Devoluciones() {
   const [productoNuevo, setProductoNuevo] = useState(null);
   const [cantidadNueva, setCantidadNueva] = useState('1');
   const [notas, setNotas] = useState('');
+  // Forma de pago de la devolución/cambio (arranca en la de la venta).
+  const [metodoDevolucion, setMetodoDevolucion] = useState('efectivo');
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState(null);
   const [ultimoResultado, setUltimoResultado] = useState(null);
@@ -108,6 +111,7 @@ export default function Devoluciones() {
   async function elegirVenta(id) {
     const data = await api.get(`/ventas/${id}`);
     setVentaSeleccionada(data);
+    setMetodoDevolucion(data.metodo_pago || 'efectivo');
     setAbiertoDetalleVenta(null);
     setDetalleVentaTabla(null);
     setItemId('');
@@ -139,6 +143,7 @@ export default function Devoluciones() {
         producto_nuevo_id: tipo === 'cambio' ? productoNuevo.id : null,
         cantidad_nueva: tipo === 'cambio' ? parseNumero(cantidadNueva) : null,
         notas: notas || null,
+        metodo_pago: metodoDevolucion,
       });
       setUltimoResultado(resultado);
       setVentaSeleccionada(null);
@@ -174,24 +179,31 @@ export default function Devoluciones() {
   const cantidadNuevaNum = parseNumero(cantidadNueva);
 
   const previewDiferencia = useMemo(() => {
-    if (!ventaSeleccionada || !itemSeleccionado) return null;
+    if (!ventaSeleccionada || !itemSeleccionado || !config) return null;
     if (cantidadNum == null || cantidadNum <= 0 || cantidadNum > Number(itemSeleccionado.cantidad)) return null;
+    // Misma lógica que el backend: con la misma forma de pago de la venta se
+    // devuelve lo que pagó; con otra, se valora con el % de esa forma de pago.
     const subtotalVenta = Number(ventaSeleccionada.subtotal) || 0;
-    const factor = subtotalVenta > 0 ? Number(ventaSeleccionada.total) / subtotalVenta : 1;
+    const esTecnicoVenta = !!ventaSeleccionada.cliente_id;
+    const mismaForma = metodoDevolucion === ventaSeleccionada.metodo_pago;
+    const factor = mismaForma
+      ? (subtotalVenta > 0 ? Number(ventaSeleccionada.total) / subtotalVenta : 1)
+      : 1 + porcentajeSobreLista(config, metodoDevolucion, esTecnicoVenta, 1) / 100;
+    const redondearMonto = (v) => (metodoDevolucion === 'efectivo' ? redondear(v, unidadRedondeo) : Math.round(v * 100) / 100);
     const montoDevuelto = Number(itemSeleccionado.precio_unitario) * factor * cantidadNum;
 
     let montoDiferencia;
     if (tipo === 'cambio') {
       if (!productoNuevo || cantidadNuevaNum == null || cantidadNuevaNum <= 0) return null;
-      const precioOriginalNuevo = Number(productoNuevo.precio_lista ?? productoNuevo.precio ?? 0);
+      const precioOriginalNuevo = Number(precioListaProducto(productoNuevo, config, { metodo: metodoDevolucion, esTecnico: esTecnicoVenta, cuotas: 1 }) ?? 0);
       const montoNuevo = precioOriginalNuevo * factor * cantidadNuevaNum;
-      montoDiferencia = redondear(montoNuevo - montoDevuelto, unidadRedondeo);
+      montoDiferencia = redondearMonto(montoNuevo - montoDevuelto);
     } else {
-      montoDiferencia = redondear(-montoDevuelto, unidadRedondeo);
+      montoDiferencia = redondearMonto(-montoDevuelto);
     }
-    const nuevoTotal = redondear(Number(ventaSeleccionada.total) + montoDiferencia, unidadRedondeo);
-    return { montoDiferencia, nuevoTotal };
-  }, [ventaSeleccionada, itemSeleccionado, cantidadNum, tipo, productoNuevo, cantidadNuevaNum, unidadRedondeo]);
+    const nuevoTotal = Math.round((Number(ventaSeleccionada.total) + montoDiferencia) * 100) / 100;
+    return { montoDiferencia, nuevoTotal, montoDevuelto };
+  }, [ventaSeleccionada, itemSeleccionado, cantidadNum, tipo, productoNuevo, cantidadNuevaNum, unidadRedondeo, metodoDevolucion, config]);
 
   return (
     <div className="page">
@@ -341,13 +353,28 @@ export default function Devoluciones() {
               </div>
             )}
 
+            <label className="campo" style={{ marginBottom: 10 }}>
+              <span>{tipo === 'cambio' ? 'Forma de pago del cambio (para la diferencia y el precio del producto nuevo)' : 'Forma de pago de la devolución'}</span>
+              <select value={metodoDevolucion} onChange={(e) => setMetodoDevolucion(e.target.value)}>
+                {METODOS_PAGO.map((m) => (
+                  <option key={m.clave} value={m.clave}>{m.label}{m.clave === ventaSeleccionada.metodo_pago ? ' (la de la venta)' : ''}</option>
+                ))}
+              </select>
+              {metodoDevolucion !== ventaSeleccionada.metodo_pago && (
+                <span className="muted" style={{ fontSize: 12 }}>
+                  La venta fue con {labelMetodo(ventaSeleccionada.metodo_pago)}: los precios se calculan con el % de {labelMetodo(metodoDevolucion)}.
+                </span>
+              )}
+            </label>
+
             <input placeholder="Notas (opcional)" value={notas} onChange={(e) => setNotas(e.target.value)} style={{ width: '100%', marginBottom: 10 }} />
 
             {previewDiferencia && (
               <div className="factura-box" style={{ marginBottom: 10 }}>
                 <p style={{ margin: 0 }}>
-                  {previewDiferencia.montoDiferencia < 0 ? 'A favor del cliente' : previewDiferencia.montoDiferencia > 0 ? 'El cliente debe pagar' : 'Sin diferencia'}:{' '}
+                  {previewDiferencia.montoDiferencia < 0 ? 'Le devolvés al cliente' : previewDiferencia.montoDiferencia > 0 ? 'El cliente te paga' : 'Sin diferencia'}:{' '}
                   <strong>{formatoMoneda(Math.abs(previewDiferencia.montoDiferencia))}</strong>
+                  {previewDiferencia.montoDiferencia !== 0 && <> en <strong>{labelMetodo(metodoDevolucion)}</strong></>}
                   {' '}— nuevo total de la venta: <strong>{formatoMoneda(previewDiferencia.nuevoTotal)}</strong>
                 </p>
               </div>
@@ -382,11 +409,11 @@ export default function Devoluciones() {
           <>
             <table className="simple-table">
               <thead>
-                <tr><th>Fecha</th><th>Venta</th><th>Producto devuelto</th><th>Cant.</th><th>Tipo</th><th>Producto nuevo</th><th>Diferencia</th><th>Nota crédito</th></tr>
+                <tr><th>Fecha</th><th>Venta</th><th>Producto devuelto</th><th>Cant.</th><th>Tipo</th><th>Producto nuevo</th><th>Diferencia</th><th>Forma de pago</th><th>Nota crédito</th></tr>
               </thead>
               <tbody>
                 {historial.length === 0 && (
-                  <tr><td colSpan={8} className="muted">Sin devoluciones registradas</td></tr>
+                  <tr><td colSpan={9} className="muted">Sin devoluciones registradas</td></tr>
                 )}
                 {historial.map((d) => (
                   <tr key={d.id}>
@@ -397,6 +424,7 @@ export default function Devoluciones() {
                     <td>{d.tipo === 'cambio' ? 'Cambio' : 'Reembolso'}</td>
                     <td>{d.descripcion_nueva || '—'}</td>
                     <td>{formatoMoneda(d.monto_diferencia)}</td>
+                    <td>{d.metodo_pago ? labelMetodo(d.metodo_pago) : '—'}</td>
                     <td>{d.pendiente_nota_credito === 1 ? 'Pendiente' : '—'}</td>
                   </tr>
                 ))}

@@ -445,9 +445,9 @@ export default function Presupuestos() {
 
   // Al ver el PDF de una pestana nueva, abrirla YA (antes del await) para
   // que el navegador no la bloquee como popup.
-  async function abrirPdfPresupuesto(id) {
+  async function abrirPdfPresupuesto(id, formato) {
     const ventana = window.open('', '_blank');
-    const blob = await api.get(`/presupuestos/${id}/comprobante`);
+    const blob = await api.get(`/presupuestos/${id}/comprobante`, formato ? { formato } : undefined);
     const url = URL.createObjectURL(blob);
     if (ventana) ventana.location.href = url;
   }
@@ -1014,7 +1014,10 @@ export default function Presupuestos() {
                             <>
                               <div className="menu-acciones-fondo" onClick={() => setMenuAbiertoId(null)} />
                               <div className="menu-acciones-lista">
-                                <button type="button" onClick={() => { setMenuAbiertoId(null); abrirPdfPresupuesto(p.id); }}>Descargar PDF</button>
+                                {p.afip_cae && (
+                                  <button type="button" onClick={() => { setMenuAbiertoId(null); abrirPdfPresupuesto(p.id); }}>Descargar factura</button>
+                                )}
+                                <button type="button" onClick={() => { setMenuAbiertoId(null); abrirPdfPresupuesto(p.id, 'comprobante'); }}>{p.afip_cae ? 'Descargar presupuesto' : 'Descargar PDF'}</button>
                                 <button type="button" onClick={() => { setMenuAbiertoId(null); abrirEditar(p); }}>Editar</button>
                                 {!p.afip_cae && (
                                   <button type="button" onClick={() => { setMenuAbiertoId(null); abrirFacturar(p); }}>Facturar</button>

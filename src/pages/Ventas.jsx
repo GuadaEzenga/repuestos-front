@@ -110,9 +110,10 @@ export default function Ventas() {
     setDetalle(data);
   }
 
-  async function verComprobante(id) {
+  // formato 'comprobante' = comprobante interno aunque la venta esté facturada.
+  async function verComprobante(id, formato) {
     const ventana = window.open('', '_blank');
-    const blob = await api.get(`/ventas/${id}/comprobante`);
+    const blob = await api.get(`/ventas/${id}/comprobante`, formato ? { formato } : undefined);
     const url = URL.createObjectURL(blob);
     if (ventana) ventana.location.href = url;
   }
@@ -232,7 +233,10 @@ export default function Ventas() {
                             <>
                               <div className="menu-acciones-fondo" onClick={() => setMenuAbiertoId(null)} />
                               <div className="menu-acciones-lista">
-                                <button type="button" onClick={() => { setMenuAbiertoId(null); verComprobante(v.id); }}>Descargar PDF</button>
+                                {v.afip_cae && (
+                                  <button type="button" onClick={() => { setMenuAbiertoId(null); verComprobante(v.id); }}>Descargar factura</button>
+                                )}
+                                <button type="button" onClick={() => { setMenuAbiertoId(null); verComprobante(v.id, 'comprobante'); }}>Descargar comprobante</button>
                                 <button type="button" onClick={() => { setMenuAbiertoId(null); abrirEditar(v); }}>Editar</button>
                                 <button type="button" onClick={() => { setMenuAbiertoId(null); pasarAPresupuesto(v); }}>Pasar a presupuesto</button>
                                 {!v.afip_cae && (
