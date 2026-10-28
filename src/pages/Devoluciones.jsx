@@ -66,11 +66,11 @@ export default function Devoluciones() {
 
   useEffect(() => { cargarHistorial(1); }, []);
 
-  async function cargarVentasTabla(paginaParam) {
+  async function cargarVentasTabla(paginaParam, texto = busquedaVenta) {
     setLoadingVentasTabla(true);
     setError(null);
     try {
-      const data = await api.get('/ventas', { page: paginaParam, pageSize: PAGE_SIZE_VENTAS });
+      const data = await api.get('/ventas', { page: paginaParam, pageSize: PAGE_SIZE_VENTAS, q: texto.trim() || undefined });
       setVentasTabla(data.ventas);
       setTotalVentasTabla(data.total);
     } catch (err) {
@@ -82,24 +82,19 @@ export default function Devoluciones() {
 
   useEffect(() => { cargarVentasTabla(1); }, []);
 
+  // Busca en el servidor un ratito después de dejar de escribir.
+  useEffect(() => {
+    const t = setTimeout(() => { setPageVentasTabla(1); cargarVentasTabla(1, busquedaVenta); }, 300);
+    return () => clearTimeout(t);
+  }, [busquedaVenta]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function cambiarPaginaVentasTabla(p) {
     setPageVentasTabla(p);
     cargarVentasTabla(p);
   }
 
-  // Búsqueda local por N° de venta o nombre de cliente (misma lógica de
-  // "coincide por sustring" que el resto del sistema), sobre lo ya cargado --
-  // si no encuentra nada en la página actual, sugiere usar el buscador de
-  // Ventas para ubicarla y volver.
-  const ventasFiltradas = busquedaVenta.trim()
-    ? ventasTabla.filter((v) => {
-        const texto = busquedaVenta.trim().toUpperCase();
-        return (
-          String(v.numero).includes(texto) ||
-          `${v.cliente_nombre || ''} ${v.cliente_apellido || ''}`.toUpperCase().includes(texto)
-        );
-      })
-    : ventasTabla;
+  // La búsqueda (N° de venta o cliente) la hace el servidor sobre TODAS las ventas.
+  const ventasFiltradas = ventasTabla;
 
   async function toggleDetalleVenta(id) {
     if (abiertoDetalleVenta === id) { setAbiertoDetalleVenta(null); setDetalleVentaTabla(null); return; }
@@ -220,10 +215,10 @@ export default function Devoluciones() {
               Elegí la venta: mirá el detalle si hace falta y clickeá "Seleccionar" para elegir qué producto devolver o cambiar.
             </p>
             <input
-              placeholder="Filtrar por N° o nombre de cliente (en esta página)..."
+              placeholder="Buscar por N° de venta o cliente..."
               value={busquedaVenta}
               onChange={(e) => setBusquedaVenta(e.target.value)}
-              style={{ width: '100%', maxWidth: 320, marginBottom: 10 }}
+              style={{ width: '100%', maxWidth: 360, marginBottom: 10 }}
             />
             {loadingVentasTabla ? (
               <div className="loading">Cargando...</div>

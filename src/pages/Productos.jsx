@@ -6,6 +6,7 @@ import { coincideTexto } from '../utils/busqueda';
 import { useUi } from '../context/UiContext';
 import Miniatura from '../components/Miniatura';
 import TextareaAuto from '../components/TextareaAuto';
+import BuscadorProducto from '../components/BuscadorProducto';
 import ImagenesProducto from '../components/ImagenesProducto';
 import OfertaModal from '../components/OfertaModal';
 import { ofertaVigente, textoOferta, hoyArgentina } from '../utils/ofertas';
@@ -29,9 +30,55 @@ function formatoFecha(fechaTexto) {
 }
 
 const PAGE_SIZE = 50;
-const RESTOCK_VACIO = { cantidad: '', costo: '', costoMoneda: 'ARS', envio_pct: '', iva_pct: '', margen_venta_pct: '' };
+const RESTOCK_VACIO = { cantidad: '', costo: '', costoMoneda: 'ARS', envio_pct: '0', iva_pct: '0', margen_venta_pct: '' };
 
-const VACIO = { codigo: '', descripcion: '', categoria: '', stock: '', costo: '', costoMoneda: 'ARS', precio_manual_ars: '', margen_venta_pct: '', envio_pct: '', iva_pct: '' };
+// Íconos chicos para la barra de herramientas.
+function Icono({ d, children }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {d ? <path d={d} /> : children}
+    </svg>
+  );
+}
+const ICONOS = {
+  oferta: <Icono><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" /><circle cx="7.5" cy="7.5" r="1.3" /></Icono>,
+  gas: <Icono><path d="M12 3c2 3 5 5 5 9a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3 0-3-1-5 1-7.5Z" /></Icono>,
+  margen: <Icono><path d="M19 5 5 19" /><circle cx="7" cy="7" r="2.2" /><circle cx="17" cy="17" r="2.2" /></Icono>,
+  excel: <Icono><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M4 9h16M4 15h16M10 3v18" /></Icono>,
+  flecha: <Icono d="m6 9 6 6 6-6" />,
+};
+
+// Botón con menú desplegable (Margen ▾, Excel ▾).
+function MenuBoton({ icono, label, items }) {
+  const [abierto, setAbierto] = useState(false);
+  return (
+    <div className="menu-acciones">
+      <button type="button" className={`btn-tool${abierto ? ' activo' : ''}`} onClick={() => setAbierto((a) => !a)}>
+        {icono}<span>{label}</span><span className="btn-tool-flecha">{ICONOS.flecha}</span>
+      </button>
+      {abierto && (
+        <>
+          <div className="menu-acciones-fondo" onClick={() => setAbierto(false)} />
+          <div className="menu-acciones-lista menu-herramientas">
+            {items.map((it) => (
+              <button key={it.label} type="button" disabled={it.disabled} onClick={() => { setAbierto(false); it.onClick(); }}>
+                <strong>{it.label}</strong>
+                {it.descripcion && <small>{it.descripcion}</small>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Restock: IVA y envío arrancan con los del producto (o 0), nunca vacíos.
+function restockDesdeProducto(p) {
+  return { ...RESTOCK_VACIO, iva_pct: String(p?.iva_pct ?? 0), envio_pct: String(p?.envio_pct ?? 0) };
+}
+
+const VACIO = { codigo: '', descripcion: '', categoria: '', stock: '', costo: '', costoMoneda: 'ARS', precio_manual_ars: '', margen_venta_pct: '', envio_pct: '0', iva_pct: '0' };
 
 // Calcula en vivo el precio final mientras se va cargando costo/iva/envio/
 // margen, igual que el programa viejo -- sin esperar a guardar. Mismo orden
@@ -203,6 +250,7 @@ export default function Productos() {
 
   // --- Actualizacion masiva de margen de ganancia ---
   const [mostrarMargenMasivo, setMostrarMargenMasivo] = useState(false);
+  const [margenOperacion, setMargenOperacion] = useState('fijar'); // 'fijar' | 'sumar'
   const [seleccionados, setSeleccionados] = useState(new Set()); // ids marcados con checkbox (selección manual)
   const [margenMasivoModo, setMargenMasivoModo] = useState('seleccion'); // 'seleccion' | 'todos' | 'categoria'
   const [margenMasivoCategoria, setMargenMasivoCategoria] = useState('');
@@ -239,15 +287,17 @@ export default function Productos() {
   // pagina/busqueda actual), de la A a la Z, para imprimir y tildar en el
   // local -- trae el archivo ya armado del backend (ver GET
   // /productos/exportar) y lo descarga como si fuera un link normal.
-  async function exportarStock() {
+  async function exportarExcel(tipo) {
     setExportando(true);
     try {
-      const blob = await api.get('/productos/exportar');
+      const blob = await api.get(tipo === 'precios' ? '/productos/exportar-precios' : '/productos/exportar');
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `control-stock-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.download = `${tipo === 'precios' ? 'precios' : 'control-stock'}-${new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Cordoba' })}.xlsx`;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (err) {
       toast(err.message, { type: 'error', duration: 5000 });
@@ -375,8 +425,8 @@ export default function Productos() {
       costoMoneda: 'ARS',
       precio_manual_ars: p.precio_manual_ars ?? '',
       margen_venta_pct: p.margen_venta_pct ?? '',
-      envio_pct: p.envio_pct ?? '',
-      iva_pct: p.iva_pct ?? '',
+      envio_pct: p.envio_pct ?? '0',
+      iva_pct: p.iva_pct ?? '0',
     };
   }
 
@@ -417,7 +467,7 @@ export default function Productos() {
     setErrorGeneral(null);
     setLoteEditId(null);
     setErrorLote(null);
-    setRestockForm(RESTOCK_VACIO);
+    setRestockForm(restockDesdeProducto(producto));
     setErrorRestock(null);
     await refrescarDetalle(producto.id);
   }
@@ -444,8 +494,8 @@ export default function Productos() {
         costo: costoUsd,
         precio_manual_ars: parseNumero(generalForm.precio_manual_ars),
         margen_venta_pct: parseNumero(generalForm.margen_venta_pct),
-        envio_pct: parseNumero(generalForm.envio_pct),
-        iva_pct: parseNumero(generalForm.iva_pct),
+        envio_pct: parseNumero(generalForm.envio_pct) ?? 0,
+        iva_pct: parseNumero(generalForm.iva_pct) ?? 0,
       });
       await refrescarDetalle(producto.id);
       await refrescarTabla();
@@ -468,8 +518,8 @@ export default function Productos() {
       cantidad: lote.cantidad ?? '',
       costo: costoUsdBase != null && cotizacion ? Number((Number(costoUsdBase) * cotizacion).toFixed(2)) : (costoUsdBase ?? ''),
       costoMoneda: 'ARS',
-      envio_pct: lote.envio_pct ?? '',
-      iva_pct: lote.iva_pct ?? '',
+      envio_pct: lote.envio_pct ?? '0',
+      iva_pct: lote.iva_pct ?? '0',
       margen_venta_pct: lote.margen_venta_pct ?? '',
     });
   }
@@ -491,8 +541,8 @@ export default function Productos() {
       await api.put(`/productos/${productoId}/lotes/${loteId}`, {
         cantidad: parseNumero(loteEditForm.cantidad),
         costo_usd_base: costoUsd,
-        envio_pct: parseNumero(loteEditForm.envio_pct),
-        iva_pct: parseNumero(loteEditForm.iva_pct),
+        envio_pct: parseNumero(loteEditForm.envio_pct) ?? 0,
+        iva_pct: parseNumero(loteEditForm.iva_pct) ?? 0,
         margen_venta_pct: parseNumero(loteEditForm.margen_venta_pct),
       });
       setLoteEditId(null);
@@ -532,15 +582,15 @@ export default function Productos() {
         categoria: producto.categoria,
         stock: cantidadRestock,
         costo: costoUsd,
-        envio_pct: parseNumero(restockForm.envio_pct),
-        iva_pct: parseNumero(restockForm.iva_pct),
+        envio_pct: parseNumero(restockForm.envio_pct) ?? 0,
+        iva_pct: parseNumero(restockForm.iva_pct) ?? 0,
         margen_venta_pct: parseNumero(restockForm.margen_venta_pct),
         mantener_precio: mantenerPrecio,
       });
       setMantenerPrecio(true);
+      setRestockForm(restockDesdeProducto({ ...producto, ...resultado }));
       setProductosCompletos((prev) => prev.map((p) => (p.id === resultado.id ? { ...p, ...resultado } : p)));
       toast(resultado.mensaje || 'Restock registrado ✓', { duration: 5000 });
-      setRestockForm(RESTOCK_VACIO);
       await refrescarDetalle(producto.id);
       await refrescarTabla();
     } catch (err) {
@@ -650,7 +700,9 @@ export default function Productos() {
     setAplicandoMargen(true);
     setError(null);
     try {
-      const body = { margen_venta_pct: parseNumero(margenMasivoValor) };
+      const valor = parseNumero(margenMasivoValor);
+      if (valor == null) throw new Error('Poné un número');
+      const body = margenOperacion === 'sumar' ? { puntos: valor } : { margen_venta_pct: valor };
       let descripcionAplicado;
       if (margenMasivoModo === 'todos') {
         body.todos = true;
@@ -664,8 +716,11 @@ export default function Productos() {
         body.producto_ids = Array.from(seleccionados);
         descripcionAplicado = `${seleccionados.size} producto${seleccionados.size === 1 ? '' : 's'} seleccionado${seleccionados.size === 1 ? '' : 's'}`;
       }
-      const resultado = await api.put('/productos/margen-masivo', body);
-      toast(`Margen actualizado a ${margenMasivoValor}% en ${descripcionAplicado} (${resultado.actualizados} producto${resultado.actualizados === 1 ? '' : 's'}).`, { duration: 5000 });
+      const resultado = await api.put(margenOperacion === 'sumar' ? '/productos/aumentar-margen' : '/productos/margen-masivo', body);
+      const queHizo = margenOperacion === 'sumar'
+        ? `Margen ${valor >= 0 ? 'aumentado' : 'bajado'} ${Math.abs(valor)} puntos`
+        : `Margen actualizado a ${margenMasivoValor}%`;
+      toast(`${queHizo} en ${descripcionAplicado} (${resultado.actualizados} producto${resultado.actualizados === 1 ? '' : 's'}).`, { duration: 5000 });
       setSeleccionados(new Set());
       setMargenMasivoValor('');
       cargar(categoriaFiltro);
@@ -774,8 +829,8 @@ export default function Productos() {
         costo: costoUsd,
         precio_manual_ars: parseNumero(nuevo.precio_manual_ars),
         margen_venta_pct: parseNumero(nuevo.margen_venta_pct),
-        envio_pct: parseNumero(nuevo.envio_pct),
-        iva_pct: parseNumero(nuevo.iva_pct),
+        envio_pct: parseNumero(nuevo.envio_pct) ?? 0,
+        iva_pct: parseNumero(nuevo.iva_pct) ?? 0,
       });
 
       if (creado.restock) {
@@ -801,25 +856,33 @@ export default function Productos() {
 
   return (
     <div className="page">
-      <div className="dashboard-toolbar">
+      <div className="productos-toolbar">
         <h1>Productos</h1>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn-secondary" onClick={() => { setBusquedaOferta(''); setMostrarSelectorOferta(true); }}>
-            Nueva oferta
+        <div className="toolbar-acciones">
+          <button type="button" className="btn-tool" onClick={() => { setBusquedaOferta(''); setMostrarSelectorOferta(true); }}>
+            {ICONOS.oferta}<span>Oferta</span>
           </button>
-          <button type="button" className="btn-secondary" onClick={abrirRecarga}>
-            {mostrarRecarga ? 'Cancelar' : 'Recarga (garrafa → gas x kg)'}
+          <button type="button" className={`btn-tool${mostrarRecarga ? ' activo' : ''}`} onClick={abrirRecarga}>
+            {ICONOS.gas}<span>Recarga gas</span>
           </button>
-          <button type="button" className="btn-secondary" onClick={() => setMostrarImportar((m) => !m)}>
-            {mostrarImportar ? 'Cancelar' : 'Importar Excel (CSV)'}
-          </button>
-          <button type="button" className="btn-secondary" onClick={exportarStock} disabled={exportando}>
-            {exportando ? 'Generando...' : 'Exportar Excel (control de stock)'}
-          </button>
-          <button type="button" className="btn-secondary" onClick={() => setMostrarMargenMasivo((m) => !m)}>
-            {mostrarMargenMasivo ? 'Cancelar' : 'Actualizar margen (masivo)'}
-          </button>
-          <button type="button" className="btn-primary" onClick={() => setMostrarForm((m) => !m)}>
+          <MenuBoton
+            icono={ICONOS.margen}
+            label="Margen"
+            items={[
+              { label: 'Fijar margen', descripcion: 'Poner un margen nuevo (ej. 45%)', onClick: () => { setMargenOperacion('fijar'); setMostrarMargenMasivo(true); } },
+              { label: 'Aumentar margen', descripcion: 'Sumar puntos al margen actual (ej. +5)', onClick: () => { setMargenOperacion('sumar'); setMostrarMargenMasivo(true); } },
+            ]}
+          />
+          <MenuBoton
+            icono={ICONOS.excel}
+            label={exportando ? 'Generando...' : 'Excel'}
+            items={[
+              { label: 'Exportar stock', descripcion: 'Planilla para controlar el stock', onClick: () => exportarExcel('stock'), disabled: exportando },
+              { label: 'Exportar precios', descripcion: 'Costos finales, precios y total del stock', onClick: () => exportarExcel('precios'), disabled: exportando },
+              { label: 'Importar productos (CSV)', descripcion: 'Cargar o reponer desde una planilla', onClick: () => setMostrarImportar(true) },
+            ]}
+          />
+          <button type="button" className="btn-primary btn-tool-primario" onClick={() => setMostrarForm((m) => !m)}>
             {mostrarForm ? 'Cancelar' : '+ Nuevo producto'}
           </button>
         </div>
@@ -870,11 +933,11 @@ export default function Productos() {
               </select>
             </label>
             <label className="campo">
-              <span>IVA % (opcional)</span>
+              <span>IVA %</span>
               <input type="text" inputMode="decimal" placeholder="IVA %" value={nuevo.iva_pct} onChange={(e) => setNuevo((n) => ({ ...n, iva_pct: e.target.value }))} style={{ width: 120 }} />
             </label>
             <label className="campo">
-              <span>Envío % (opcional)</span>
+              <span>Envío %</span>
               <input type="text" inputMode="decimal" placeholder="Envío %" value={nuevo.envio_pct} onChange={(e) => setNuevo((n) => ({ ...n, envio_pct: e.target.value }))} style={{ width: 130 }} />
             </label>
             <label className="campo">
@@ -919,15 +982,12 @@ export default function Productos() {
               {recargaFilas.map((fila) => (
                 <Fragment key={fila.id}>
                   <div className="recarga-fila">
-                    <select
+                    <BuscadorProducto
+                      productos={productosTodos}
                       value={fila.garrafaId}
-                      onChange={(e) => actualizarFilaRecarga(fila.id, 'garrafaId', e.target.value)}
-                    >
-                      <option value="">Elegí la garrafa...</option>
-                      {productosTodos.map((p) => (
-                        <option key={p.id} value={p.id}>{p.descripcion} (stock: {p.stock})</option>
-                      ))}
-                    </select>
+                      onChange={(id) => actualizarFilaRecarga(fila.id, 'garrafaId', id)}
+                      placeholder="Garrafa (buscá ej. r410 11)"
+                    />
                     <input
                       type="text"
                       inputMode="decimal"
@@ -936,15 +996,12 @@ export default function Productos() {
                       onChange={(e) => actualizarFilaRecarga(fila.id, 'cantidad', e.target.value)}
                     />
                     <span className="recarga-flecha">→</span>
-                    <select
+                    <BuscadorProducto
+                      productos={productosTodos}
                       value={fila.gasId}
-                      onChange={(e) => actualizarFilaRecarga(fila.id, 'gasId', e.target.value)}
-                    >
-                      <option value="">Elegí el gas x kg...</option>
-                      {productosTodos.map((p) => (
-                        <option key={p.id} value={p.id}>{p.descripcion} (stock: {p.stock})</option>
-                      ))}
-                    </select>
+                      onChange={(id) => actualizarFilaRecarga(fila.id, 'gasId', id)}
+                      placeholder="Gas x kg (buscá ej. r410 kg)"
+                    />
                     <button
                       type="button"
                       className="btn-primary"
@@ -1030,7 +1087,7 @@ export default function Productos() {
                     </label>
                   </div>
                   <p className="muted" style={{ fontSize: 12, marginTop: 0, marginBottom: 10 }}>
-                    El costo primero se le suma el IVA%, y sobre eso el envío% (costo final). El margen se aplica después, sobre el costo final convertido a pesos. Si dejás IVA/Envío/Margen vacíos, usan el valor general de Configuración.
+                    El costo primero se le suma el IVA%, y sobre eso el envío% (costo final). El margen se aplica después, sobre el costo final convertido a pesos. IVA y envío vacíos se guardan como 0. Si dejás el margen vacío, usa el margen general de Configuración.
                   </p>
                   {(() => {
                     const preview = previsualizarPrecio(generalForm, configFull, cotizacion);
@@ -1131,8 +1188,8 @@ export default function Productos() {
                                   <option value="USD">USD</option>
                                   <option value="ARS">ARS</option>
                                 </select>
-                                <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={loteEditForm.iva_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
-                                <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={loteEditForm.envio_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
+                                <label className="campo-mini"><span>IVA %</span><input type="text" inputMode="decimal" placeholder="0" value={loteEditForm.iva_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 70 }} /></label>
+                                <label className="campo-mini"><span>Envío %</span><input type="text" inputMode="decimal" placeholder="0" value={loteEditForm.envio_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 70 }} /></label>
                                 <input type="text" inputMode="decimal" placeholder="Margen %" value={loteEditForm.margen_venta_pct} onChange={(e) => setLoteEditForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 100 }} />
                                 <button type="button" className="btn-primary" disabled={guardandoLote} onClick={() => guardarLote(detalleAbiertoId, l.id)}>
                                   {guardandoLote ? 'Guardando...' : 'Guardar lote'}
@@ -1251,8 +1308,8 @@ export default function Productos() {
                       <option value="USD">USD</option>
                       <option value="ARS">ARS</option>
                     </select>
-                    <input type="text" inputMode="decimal" placeholder="IVA % (opcional)" value={restockForm.iva_pct} onChange={(e) => setRestockForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 120 }} />
-                    <input type="text" inputMode="decimal" placeholder="Envío % (opcional)" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 130 }} />
+                    <label className="campo-mini"><span>IVA %</span><input type="text" inputMode="decimal" placeholder="0" value={restockForm.iva_pct} onChange={(e) => setRestockForm((f) => ({ ...f, iva_pct: e.target.value }))} style={{ width: 70 }} /></label>
+                    <label className="campo-mini"><span>Envío %</span><input type="text" inputMode="decimal" placeholder="0" value={restockForm.envio_pct} onChange={(e) => setRestockForm((f) => ({ ...f, envio_pct: e.target.value }))} style={{ width: 70 }} /></label>
                     <input type="text" inputMode="decimal" placeholder="Margen % (opcional)" value={restockForm.margen_venta_pct} onChange={(e) => setRestockForm((f) => ({ ...f, margen_venta_pct: e.target.value }))} style={{ width: 140 }} />
                     <button type="button" className="btn-primary" disabled={guardandoRestock} onClick={() => confirmarRestock(p)}>
                       {guardandoRestock ? 'Guardando...' : 'Confirmar restock'}
@@ -1290,7 +1347,7 @@ export default function Productos() {
                     );
                   })()}
                   <p className="muted" style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}>
-                    Si dejás IVA/Envío/Margen vacíos, se usa lo que ya tenía el producto (o el general de Configuración).
+                    IVA y envío arrancan con los del producto (vacío = 0). Si dejás el margen vacío, se usa el que ya tenía el producto.
                   </p>
                 </>
                 );
@@ -1302,7 +1359,19 @@ export default function Productos() {
 
       {mostrarMargenMasivo && (
         <div className="panel" style={{ marginBottom: 18 }}>
-          <h2>Actualizar margen de ganancia (masivo)</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ margin: 0 }}>{margenOperacion === 'sumar' ? 'Aumentar margen' : 'Fijar margen'}</h2>
+            <button type="button" className="modal-cerrar" onClick={() => setMostrarMargenMasivo(false)} aria-label="Cerrar">×</button>
+          </div>
+          <div className="segmentado" style={{ margin: '10px 0' }}>
+            <button type="button" className={margenOperacion === 'fijar' ? 'activo' : ''} onClick={() => setMargenOperacion('fijar')}>Fijar margen</button>
+            <button type="button" className={margenOperacion === 'sumar' ? 'activo' : ''} onClick={() => setMargenOperacion('sumar')}>Aumentar margen</button>
+          </div>
+          <p className="muted" style={{ fontSize: 12, margin: '0 0 10px' }}>
+            {margenOperacion === 'sumar'
+              ? 'Suma los puntos que pongas al margen que ya tiene cada producto (ej. 45% + 5 = 50%). Con un número negativo lo baja. Los de precio manual no se tocan.'
+              : 'Pone el mismo margen a todos los productos elegidos.'}
+          </p>
           <div className="form-row" style={{ flexWrap: 'wrap', gap: 10 }}>
             <select value={margenMasivoModo} onChange={(e) => setMargenMasivoModo(e.target.value)}>
               <option value="seleccion">Selección manual ({seleccionados.size} marcado{seleccionados.size === 1 ? '' : 's'})</option>
@@ -1317,7 +1386,7 @@ export default function Productos() {
             )}
             <input
               type="text" inputMode="decimal"
-              placeholder="Margen % nuevo"
+              placeholder={margenOperacion === 'sumar' ? 'Puntos a sumar (ej. 5)' : 'Margen % nuevo'}
               value={margenMasivoValor}
               onChange={(e) => setMargenMasivoValor(e.target.value)}
               style={{ width: 140 }}
@@ -1341,7 +1410,10 @@ export default function Productos() {
 
       {mostrarImportar && (
         <div className="panel" style={{ marginBottom: 18 }}>
-          <h2>Importar productos desde Excel</h2>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <h2 style={{ margin: 0 }}>Importar productos desde Excel</h2>
+            <button type="button" className="modal-cerrar" onClick={() => setMostrarImportar(false)} aria-label="Cerrar">×</button>
+          </div>
           <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>
             En Excel o Google Sheets: <strong>Archivo → Guardar como / Exportar → CSV</strong>, y subí ese archivo acá.
             Columnas que reconoce (no hace falta que estén todas, ni en ese orden): <code>codigo</code>, <code>descripcion</code>, <code>costo</code>, <code>stock</code>, <code>categoria</code>, <code>margen</code>, <code>envio</code>, <code>iva</code>.

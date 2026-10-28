@@ -87,6 +87,27 @@ function DetalleCliente({ clienteId, onActualizado }) {
   const [form, setForm] = useState(CLIENTE_VACIO);
   const [guardando, setGuardando] = useState(false);
   const [editandoDatoId, setEditandoDatoId] = useState(null); // id, 'nuevo' o null
+  // Detalle de una venta del historial ("Ver"): { id, data }
+  const [ventaAbierta, setVentaAbierta] = useState(null);
+
+  async function verVenta(id) {
+    if (ventaAbierta?.id === id) { setVentaAbierta(null); return; }
+    setVentaAbierta({ id, data: null });
+    try {
+      const data = await api.get(`/ventas/${id}`);
+      setVentaAbierta({ id, data });
+    } catch (err) {
+      toast(err.message, { type: 'error' });
+      setVentaAbierta(null);
+    }
+  }
+
+  async function descargarVenta(id) {
+    const ventana = window.open('', '_blank');
+    const blob = await api.get(`/ventas/${id}/comprobante`, { formato: 'comprobante' });
+    const url = URL.createObjectURL(blob);
+    if (ventana) ventana.location.href = url;
+  }
 
   async function cargar() {
     try {
@@ -211,16 +232,41 @@ function DetalleCliente({ clienteId, onActualizado }) {
           <p className="muted" style={{ margin: 0 }}>Sin compras registradas</p>
         ) : (
           <table className="simple-table">
-            <thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Pago</th><th>Factura</th></tr></thead>
+            <thead><tr><th>N°</th><th>Fecha</th><th>Total</th><th>Pago</th><th>Factura</th><th /></tr></thead>
             <tbody>
               {detalle.ventas.map((v) => (
-                <tr key={v.id}>
-                  <td>{v.numero}</td>
-                  <td>{String(v.fecha).slice(0, 10)}</td>
-                  <td>{formatoMoneda(v.total)}</td>
-                  <td>{textoFormaPago(v.metodo_pago)}</td>
-                  <td>{v.afip_cae ? 'Facturada' : 'Pendiente'}</td>
-                </tr>
+                <Fragment key={v.id}>
+                  <tr>
+                    <td>{v.numero}</td>
+                    <td>{new Date(v.fecha).toLocaleDateString('es-AR')}</td>
+                    <td>{formatoMoneda(v.total)}</td>
+                    <td>{textoFormaPago(v.metodo_pago, v.cuotas)}</td>
+                    <td>{v.afip_cae ? 'Facturada' : v.sin_factura ? 'Sin factura' : 'Pendiente'}</td>
+                    <td><button type="button" className="btn-link" onClick={() => verVenta(v.id)}>{ventaAbierta?.id === v.id ? 'Ocultar' : 'Ver'}</button></td>
+                  </tr>
+                  {ventaAbierta?.id === v.id && (
+                    <tr>
+                      <td colSpan={6} style={{ background: 'var(--bg)' }}>
+                        {!ventaAbierta.data ? (
+                          <span className="muted">Cargando...</span>
+                        ) : (
+                          <div style={{ fontSize: 12.5 }}>
+                            {ventaAbierta.data.items.map((it) => (
+                              <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '3px 0', borderBottom: '1px dashed var(--border)' }}>
+                                <span>{Number(it.cantidad).toLocaleString('es-AR')} × {it.descripcion}{it.grupo_nombre ? <span className="muted"> ({it.grupo_nombre})</span> : null}</span>
+                                <span>{formatoMoneda(it.subtotal)}</span>
+                              </div>
+                            ))}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 6 }}>
+                              <span className="muted">{ventaAbierta.data.notas ? `Notas: ${ventaAbierta.data.notas}` : ''}</span>
+                              <button type="button" className="btn-link" onClick={() => descargarVenta(v.id)}>Ver comprobante</button>
+                            </div>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>

@@ -797,10 +797,20 @@ export default function NuevaVenta() {
                         </div>
                       </td>
                       <td>
-                        {formatoMoneda(precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100))}
-                        {Number(l.descuentoPct) !== 0 && (
-                          <div className="muted" style={{ fontSize: 11 }}>desc. {l.descuentoPct}%</div>
-                        )}
+                        {(() => {
+                          // Subtotal ya con el descuento/recargo de la forma de pago (y el
+                          // descuento propio de la línea); abajo, tachado, el de lista.
+                          const lista = precioLinea(l) * cantidadNum(l);
+                          const final = lista * (1 - (Number(l.descuentoPct) || 0) / 100) * (1 + ajustePct / 100);
+                          const cambia = Math.abs(final - lista) >= 0.01;
+                          return (
+                            <div className="subtotal-linea">
+                              <span className={`subtotal-final${cambia ? (final < lista ? ' baja' : ' sube') : ''}`}>{formatoMoneda(final)}</span>
+                              {cambia && <span className="subtotal-lista">{formatoMoneda(lista)}</span>}
+                              {Number(l.descuentoPct) !== 0 && <span className="subtotal-chip">{Number(l.descuentoPct) > 0 ? '−' : '+'}{Math.abs(Number(l.descuentoPct))}% este producto</span>}
+                            </div>
+                          );
+                        })()}
                       </td>
                       <td><button type="button" onClick={() => quitarLinea(idx)} className="btn-link-danger">Quitar</button></td>
                     </tr>
@@ -845,14 +855,6 @@ export default function NuevaVenta() {
               </tbody>
             </table>
 
-            {carrito.some((l) => l.kind === 'grupo') && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 10 }}>
-                <input type="checkbox" checked={detalleKits} onChange={(e) => setDetalleKits(e.target.checked)} />
-                Mostrar en el comprobante los productos que incluye cada kit
-                <span className="muted" style={{ fontSize: 11 }}>(si no, sale solo el nombre del kit y su precio)</span>
-              </label>
-            )}
-
             {lineasSeleccionadas.size > 0 && (
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10 }}>
                 <span className="muted" style={{ fontSize: 12 }}>
@@ -872,7 +874,7 @@ export default function NuevaVenta() {
 
             {carrito.length > 0 && (
               <div className="resumen-totales">
-                <div className="resumen-linea"><span>Subtotal</span><span>{formatoMoneda(subtotalEstimado)}</span></div>
+                <div className="resumen-linea resumen-lista"><span>Precio de lista</span><span>{formatoMoneda(subtotalEstimado)}</span></div>
                 {ajustePct !== 0 && (
                   <div className={`resumen-linea ${ajustePct < 0 ? 'descuento' : ''}`}>
                     <span>
@@ -881,7 +883,7 @@ export default function NuevaVenta() {
                     <span>{montoAjuste >= 0 ? '+' : ''}{formatoMoneda(montoAjuste)}</span>
                   </div>
                 )}
-                <div className="resumen-linea total"><span>Total estimado</span><span>{formatoMoneda(totalEstimado)}</span></div>
+                <div className="resumen-linea total"><span>Total</span><span>{formatoMoneda(totalEstimado)}</span></div>
                 <div style={{ marginTop: 10 }}>
                   <label className="muted" style={{ fontSize: 12 }}>Total final (dejalo vacío para usar el estimado)</label>
                   <input
@@ -991,6 +993,12 @@ export default function NuevaVenta() {
               onChange={(e) => setNotas(e.target.value)}
               style={{ width: '100%', marginTop: 10, minHeight: 60 }}
             />
+            {carrito.some((l) => l.kind === 'grupo') && (
+              <label className="tilde-chico" title="Si está tildado, en el comprobante sale debajo de cada kit lo que incluye">
+                <input type="checkbox" checked={detalleKits} onChange={(e) => setDetalleKits(e.target.checked)} />
+                Detalle de kits en comprobante
+              </label>
+            )}
             <h2 style={{ marginTop: 16 }}>Facturar</h2>
             <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto={metodoPago === 'efectivo' || presupuestoYaFacturado} config={config} />
             {presupuestoYaFacturado && (
