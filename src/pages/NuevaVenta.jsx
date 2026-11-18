@@ -1041,10 +1041,13 @@ export default function NuevaVenta() {
               </label>
             )}
             <h2 style={{ marginTop: 16 }}>Facturar</h2>
-            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto={(metodoPago === 'efectivo' && !enCuenta) || presupuestoYaFacturado} config={config} />
-            {presupuestoYaFacturado && (
-              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>El presupuesto #{presupuestoCargado} ya está facturado: por eso arranca en "No facturar".</p>
-            )}
+            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto config={config} />
+            <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>
+              {presupuestoYaFacturado
+                ? `El presupuesto #${presupuestoCargado} ya está facturado. `
+                : ''}
+              Arranca en "No facturar" con cualquier forma de pago: si querés factura, elegí "A mí" o "A cliente" antes de confirmar.
+            </p>
             {errorVenta && <p className="login-error">{errorVenta}</p>}
             <button
               type="button"
