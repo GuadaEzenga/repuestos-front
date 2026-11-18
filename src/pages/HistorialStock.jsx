@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../api/client';
+import { useUi } from '../context/UiContext';
 
 const PAGE_SIZE = 50;
 const TIPOS = [
@@ -44,6 +45,9 @@ export default function HistorialStock() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [detalle, setDetalle] = useState(null);
+  const { toast, confirm } = useUi();
+  const [recarga, setRecarga] = useState(0);
+  const [dandoDeBaja, setDandoDeBaja] = useState(false);
 
   // Busqueda con un pequeno retraso para no pedir al servidor en cada tecla.
   useEffect(() => {
@@ -60,7 +64,7 @@ export default function HistorialStock() {
       .catch((err) => { if (!cancelado) setError(err.message); })
       .finally(() => { if (!cancelado) setLoading(false); });
     return () => { cancelado = true; };
-  }, [page, qAplicada, tipo, desde, hasta]);
+  }, [page, qAplicada, tipo, desde, hasta, recarga]);
 
   useEffect(() => {
     if (!detalle) return undefined;
@@ -159,6 +163,35 @@ export default function HistorialStock() {
               </tbody>
             </table>
             {detalle.aproximado && <p className="muted" style={{ fontSize: 12 }}>Este ingreso se reconstruyó a partir de datos viejos: algunos valores son aproximados.</p>}
+            <div style={{ marginTop: 14 }}>
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={dandoDeBaja}
+                title="Para un ingreso cargado por error: se descuenta ese stock del producto"
+                onClick={async () => {
+                  const ok = await confirm(
+                    `¿Dar de baja este ingreso de ${numero(detalle.cantidad_original)} unidad(es) de ${detalle.descripcion}? Se descuentan ${numero(detalle.cantidad_restante)} del stock y deja de figurar en el historial.`,
+                    { danger: true, confirmLabel: 'Dar de baja' }
+                  );
+                  if (!ok) return;
+                  setDandoDeBaja(true);
+                  try {
+                    await api.delete(`/productos/${detalle.producto_id}/lotes/${detalle.id}`);
+                    toast('Ingreso dado de baja ✓');
+                    setDetalle(null);
+                    setRecarga((n) => n + 1);
+                  } catch (err) {
+                    toast(err.message, { type: 'error', duration: 7000 });
+                  } finally {
+                    setDandoDeBaja(false);
+                  }
+                }}
+              >
+                {dandoDeBaja ? 'Dando de baja...' : 'Dar de baja este ingreso'}
+              </button>
+              <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>Solo se puede si no se vendió nada de este ingreso. Si la cantidad estaba mal, corregila en el producto.</p>
+            </div>
           </div>
         </div>
       )}

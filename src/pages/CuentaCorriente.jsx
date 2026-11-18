@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client';
 import { parseNumero } from '../utils/numero';
 import { useUi } from '../context/UiContext';
-import { METODOS_PAGO, labelMetodo } from '../utils/pagos';
+import { METODOS_PAGO, labelMetodo, esMetodoCredito } from '../utils/pagos';
 import { hoyArgentina } from '../utils/ofertas';
 
 function moneda(v) {
@@ -49,6 +49,11 @@ export default function CuentaCorriente() {
   const [errorCuenta, setErrorCuenta] = useState(null);
 
   const [modo, setModo] = useState(null); // 'pago' | 'ajuste' | null
+  const [ventaPago, setVentaPago] = useState(null); // venta a la que se aplica el pago (null = pago a cuenta)
+  const [ventasAbiertas, setVentasAbiertas] = useState({}); // ids de ventas con el detalle desplegado
+  const [verSaldadas, setVerSaldadas] = useState(false);
+  const [editForma, setEditForma] = useState(null); // { id, metodo, cuotas } de la venta cuya forma de pago se esta cambiando
+  const [guardandoForma, setGuardandoForma] = useState(false);
   const [monto, setMonto] = useState('');
   const [metodo, setMetodo] = useState('efectivo');
   const [fecha, setFecha] = useState(hoyArgentina());
@@ -101,7 +106,7 @@ export default function CuentaCorriente() {
     cargarLista();
   }
   function cerrarForm() {
-    setModo(null); setMonto(''); setDescripcion(''); setErrorForm(null); setMetodo('efectivo'); setFecha(hoyArgentina());
+    setModo(null); setVentaPago(null); setMonto(''); setDescripcion(''); setErrorForm(null); setMetodo('efectivo'); setFecha(hoyArgentina());
   }
 
   useEffect(() => {
@@ -122,7 +127,7 @@ export default function CuentaCorriente() {
     setErrorForm(null);
     try {
       if (modo === 'pago') {
-        await api.post(`/cuenta-corriente/cliente/${abiertoId}/pago`, { monto: importe, metodo_pago: metodo, fecha, descripcion: descripcion.trim() || null });
+        await api.post(`/cuenta-corriente/cliente/${abiertoId}/pago`, { monto: importe, metodo_pago: metodo, fecha, descripcion: descripcion.trim() || null, venta_id: ventaPago ? ventaPago.id : null });
         toast('Pago registrado ✓');
       } else {
         await api.post(`/cuenta-corriente/cliente/${abiertoId}/ajuste`, { monto: importe, fecha, descripcion: descripcion.trim() });
@@ -149,6 +154,28 @@ export default function CuentaCorriente() {
     }
   }
 
+  async function guardarForma() {
+    if (!editForma) return;
+    setGuardandoForma(true);
+    try {
+      const r = await api.put(`/cuenta-corriente/venta/${editForma.id}/forma-pago`, { metodo_pago: editForma.metodo, cuotas: esMetodoCredito(editForma.metodo) ? editForma.cuotas : null });
+      toast(`Forma de pago cambiada: el total pasó de ${moneda(r.total_anterior)} a ${moneda(r.total_nuevo)} ✓`, { duration: 6000 });
+      setEditForma(null);
+      await cargarCuenta(abiertoId);
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 8000 });
+    } finally {
+      setGuardandoForma(false);
+    }
+  }
+
+  function pagarVenta(v) {
+    cerrarForm();
+    setVentaPago(v);
+    setMonto(String(v.pendiente).replace('.', ','));
+    setModo('pago');
+  }
+
   const conDeuda = clientes.filter((c) => c.saldo > 0.005).length;
 
   return (
@@ -156,7 +183,7 @@ export default function CuentaCorriente() {
       <div className="productos-toolbar">
         <h1>Cuenta corriente</h1>
       </div>
-      <p className="muted" style={{ marginTop: 0 }}>Ventas a clientes que pagan después. Se cargan desde Nueva venta con la forma de pago “Cuenta corriente”; acá registrás lo que te van pagando.</p>
+      <p className="muted" style={{ marginTop: 0 }}>Ventas a clientes que pagan después. Se cargan desde Nueva venta tildando “Dejar a cuenta corriente” (con el precio de la forma de pago que elijas); acá ves cada venta con su detalle y registrás lo que te van pagando, venta por venta.</p>
 
       <div className="cards-row" style={{ marginBottom: 16 }}>
         <div className="stat-card">
@@ -218,14 +245,14 @@ export default function CuentaCorriente() {
                     <Saldo valor={cuenta.saldo} grande />
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
-                    <button type="button" className="btn-primary" onClick={() => { cerrarForm(); setModo('pago'); }}>Registrar pago</button>
+                    <button type="button" className="btn-primary" onClick={() => { cerrarForm(); setModo('pago'); }}>Pago a cuenta</button>
                     <button type="button" className="btn-secondary" onClick={() => { cerrarForm(); setModo('ajuste'); }}>Ajuste</button>
                   </div>
                 </div>
 
                 {modo && (
                   <form onSubmit={guardarMovimiento} className="panel" style={{ marginBottom: 12 }}>
-                    <h2 style={{ marginBottom: 8 }}>{modo === 'pago' ? 'Registrar pago del cliente' : 'Ajuste de saldo'}</h2>
+                    <h2 style={{ marginBottom: 8 }}>{modo === 'pago' ? (ventaPago ? `Pago de la venta #${ventaPago.numero} (falta ${moneda(ventaPago.pendiente)})` : 'Pago a cuenta (sin elegir una venta)') : 'Ajuste de saldo'}</h2>
                     <div className="form-row" style={{ flexWrap: 'wrap', gap: 8 }}>
                       <label className="campo">
                         <span>{modo === 'pago' ? 'Monto que paga' : 'Monto (+ suma deuda, − la baja)'}</span>
@@ -256,6 +283,99 @@ export default function CuentaCorriente() {
                   </form>
                 )}
 
+                <h3 style={{ margin: '14px 0 8px', fontSize: 15 }}>Ventas de este cliente</h3>
+                {cuenta.pagos_sin_asignar > 0 && (
+                  <p className="muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
+                    Hay {moneda(cuenta.pagos_sin_asignar)} pagados “a cuenta” sin asignar a una venta puntual (ya están descontados del saldo).
+                  </p>
+                )}
+                {(() => {
+                  const pendientes = cuenta.ventas.filter((v) => !v.saldada);
+                  const saldadas = cuenta.ventas.filter((v) => v.saldada);
+                  const lista = verSaldadas ? [...pendientes, ...saldadas] : pendientes;
+                  const tarjeta = (v) => {
+                    const abierta = !!ventasAbiertas[v.id];
+                    return (
+                      <div key={v.id} className="factura-box" style={{ marginTop: 8, opacity: v.saldada ? 0.75 : 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                          <div>
+                            <strong>Venta #{v.numero}</strong> <span className="muted">· {fechaCorta(v.fecha)} · {labelMetodo(v.metodo_pago)}</span>
+                            <div className="muted" style={{ fontSize: 12 }}>
+                              Total {moneda(v.total_original)}
+                              {v.devuelto > 0 && ` · devolución ${moneda(v.devuelto)}`}
+                              {v.pagado > 0 && ` · pagó ${moneda(v.pagado)}`}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            {v.saldada
+                              ? <span style={{ color: 'var(--success)', fontWeight: 700 }}>Saldada</span>
+                              : <span style={{ color: 'var(--danger)', fontWeight: 700 }}>Falta {moneda(v.pendiente)}</span>}
+                            {!v.saldada && <button type="button" className="btn-primary" onClick={() => pagarVenta(v)}>Registrar pago</button>}
+                            {v.metodo_pago !== 'cuenta_corriente' && (
+                              <button type="button" className="btn-secondary" onClick={() => setEditForma({ id: v.id, metodo: v.metodo_pago, cuotas: 1 })} title="Cambiar con qué precio se cobra (ej. de efectivo a transferencia)">Cambiar forma de pago</button>
+                            )}
+                            <button type="button" className="btn-secondary" onClick={() => setVentasAbiertas((prev) => ({ ...prev, [v.id]: !prev[v.id] }))}>{abierta ? 'Ocultar detalle' : 'Ver detalle'}</button>
+                          </div>
+                        </div>
+                        {editForma && editForma.id === v.id && (
+                          <div className="panel" style={{ marginTop: 8 }}>
+                            <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>Se recalcula el total con el precio de la forma de pago elegida y se actualiza lo que debe.</div>
+                            <div className="form-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                              <select value={editForma.metodo} onChange={(e) => setEditForma((f) => ({ ...f, metodo: e.target.value, cuotas: 1 }))}>
+                                {METODOS_PAGO_ENTREGA.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
+                              </select>
+                              {esMetodoCredito(editForma.metodo) && (
+                                <select value={editForma.cuotas} onChange={(e) => setEditForma((f) => ({ ...f, cuotas: Number(e.target.value) }))}>
+                                  {[1, 2, 3].map((n) => <option key={n} value={n}>{n === 1 ? '1 pago' : `${n} cuotas sin interés`}</option>)}
+                                </select>
+                              )}
+                              <button type="button" className="btn-primary" disabled={guardandoForma} onClick={guardarForma}>{guardandoForma ? 'Guardando...' : 'Guardar'}</button>
+                              <button type="button" className="btn-secondary" onClick={() => setEditForma(null)}>Cancelar</button>
+                            </div>
+                          </div>
+                        )}
+                        {abierta && (
+                          <div style={{ marginTop: 8 }}>
+                            <table className="simple-table">
+                              <thead><tr><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+                              <tbody>
+                                {v.items.map((it, i) => (
+                                  <tr key={i}><td>{it.descripcion}</td><td>{it.cantidad}</td><td>{moneda(it.precio_unitario)}</td><td>{moneda(it.subtotal)}</td></tr>
+                                ))}
+                              </tbody>
+                            </table>
+                            {v.pagos.length > 0 && (
+                              <div style={{ marginTop: 6, fontSize: 13 }}>
+                                <strong>Pagos de esta venta:</strong>
+                                {v.pagos.map((pg) => (
+                                  <div key={pg.id} className="muted">
+                                    {fechaCorta(pg.fecha)} · {moneda(pg.monto)} · {labelMetodo(pg.metodo_pago)}{pg.descripcion ? ` · ${pg.descripcion}` : ''}
+                                    {' '}<button type="button" className="btn-link" onClick={() => borrarMovimiento({ id: pg.id, tipo: 'pago', monto: -pg.monto })}>Eliminar</button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  };
+                  return (
+                    <>
+                      {lista.length === 0 && <p className="muted" style={{ margin: 0 }}>{cuenta.ventas.length === 0 ? 'Este cliente no tiene ventas a cuenta corriente.' : 'No tiene ventas pendientes.'}</p>}
+                      {lista.map(tarjeta)}
+                      {saldadas.length > 0 && (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, marginTop: 10 }}>
+                          <input type="checkbox" checked={verSaldadas} onChange={(e) => setVerSaldadas(e.target.checked)} />
+                          Mostrar también las ventas saldadas ({saldadas.length})
+                        </label>
+                      )}
+                    </>
+                  );
+                })()}
+
+                <details style={{ marginTop: 14 }}>
+                  <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Historial completo de movimientos</summary>
                 <div className="tabla-scroll">
                   <table className="simple-table">
                     <thead><tr><th>Fecha</th><th>Movimiento</th><th>Detalle</th><th>Importe</th><th>Saldo</th><th /></tr></thead>
@@ -278,6 +398,7 @@ export default function CuentaCorriente() {
                     </tbody>
                   </table>
                 </div>
+                </details>
               </>
             )}
           </div>

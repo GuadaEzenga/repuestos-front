@@ -45,6 +45,8 @@ export default function NuevaVenta() {
   const [revisando, setRevisando] = useState(false);
   // Precio de tecnico sin cargar un cliente de la agenda.
   const [tecnicoManual, setTecnicoManual] = useState(false);
+  // Venta fiada: el cliente la paga despues. El precio sale de la forma de pago elegida.
+  const [enCuenta, setEnCuenta] = useState(false);
   const [clienteBuscadorEnfocado, setClienteBuscadorEnfocado] = useState(false);
   const [presupuestoCargado, setPresupuestoCargado] = useState(null); // numero del presupuesto que se cargo al carrito, si vino de ahi
   const [presupuestoYaFacturado, setPresupuestoYaFacturado] = useState(false);
@@ -280,7 +282,15 @@ export default function NuevaVenta() {
   async function cargarDesdePresupuesto(presupuestoId) {
     const detalle = await api.get(`/presupuestos/${presupuestoId}`);
     const lineasNuevas = lineasCarritoDesdeItems(detalle.items, productosPorId);
-    setCarrito((prev) => [...prev, ...lineasNuevas]);
+    // Elegir un presupuesto REEMPLAZA lo cargado (no se mezcla con el anterior).
+    setCarrito(lineasNuevas);
+    setExpandido({});
+    setLineasSeleccionadas(new Set());
+    setDescuentoLote('');
+    setTotalManual('');
+    setClienteSeleccionado(null);
+    setTecnicoManual(Number(detalle.descuento_tecnico_pct) === 1 && !detalle.cliente_id);
+    setEnCuenta(false);
     setPresupuestoCargado(detalle.numero);
     setPresupuestoYaFacturado(!!detalle.afip_cae);
     setDetalleKits(!!detalle.detalle_kits);
@@ -472,8 +482,8 @@ export default function NuevaVenta() {
 
   async function confirmarVenta() {
     if (carrito.length === 0) return;
-    if (metodoPago === 'cuenta_corriente' && !clienteSeleccionado) {
-      setErrorVenta('Para vender a cuenta corriente elegí un cliente de la agenda.');
+    if (enCuenta && !clienteSeleccionado) {
+      setErrorVenta('Para dejar la venta en cuenta corriente elegí un cliente de la agenda.');
       setRevisando(false);
       return;
     }
@@ -496,6 +506,7 @@ export default function NuevaVenta() {
         cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
         facturacion: facturacionVenta.facturacion,
         tecnico: !clienteSeleccionado && tecnicoManual,
+        en_cuenta_corriente: enCuenta,
       };
       const venta = await api.post('/ventas', body);
       setRevisando(false);
@@ -554,6 +565,7 @@ export default function NuevaVenta() {
     setDescuentoLote('');
     setClienteSeleccionado(null);
     setTecnicoManual(false);
+    setEnCuenta(false);
     setBusquedaCliente('');
     setMetodoPago('efectivo');
     setCuotas(1);
@@ -969,12 +981,16 @@ export default function NuevaVenta() {
           <div className="panel" style={{ marginTop: 16 }}>
             <h2>Forma de pago</h2>
             <select value={metodoPago} onChange={(e) => { setMetodoPago(e.target.value); setCuotas(1); }} style={{ width: '100%' }}>
-              {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
+              {METODOS_PAGO.filter((m) => m.clave !== 'cuenta_corriente').map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
             </select>
-            {metodoPago === 'cuenta_corriente' && (
-              <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+            <label className="tilde-chico" style={{ marginTop: 8 }} title="El cliente la paga después: se suma a su cuenta corriente, con el precio de la forma de pago elegida arriba">
+              <input type="checkbox" checked={enCuenta} onChange={(e) => setEnCuenta(e.target.checked)} />
+              Dejar a cuenta corriente (la paga después)
+            </label>
+            {enCuenta && (
+              <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
                 {clienteSeleccionado
-                  ? `No se cobra ahora: el total se suma al saldo de ${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido || ''}.`.trim()
+                  ? `No se cobra ahora: el total (con el precio de "${labelMetodo(metodoPago)}") se suma a la cuenta de ${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido || ''}.`.trim()
                   : 'Elegí un cliente de la agenda: la venta se suma a su cuenta corriente.'}
               </p>
             )}
@@ -1025,7 +1041,7 @@ export default function NuevaVenta() {
               </label>
             )}
             <h2 style={{ marginTop: 16 }}>Facturar</h2>
-            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto={metodoPago === 'efectivo' || presupuestoYaFacturado} config={config} />
+            <FacturacionForm clienteId={clienteSeleccionado?.id || null} onChange={setFacturacionVenta} compacto mostrarNoFacturar noFacturarPorDefecto={(metodoPago === 'efectivo' && !enCuenta) || presupuestoYaFacturado} config={config} />
             {presupuestoYaFacturado && (
               <p className="muted" style={{ fontSize: 12, margin: '6px 0 0' }}>El presupuesto #{presupuestoCargado} ya está facturado: por eso arranca en "No facturar".</p>
             )}
@@ -1053,7 +1069,7 @@ export default function NuevaVenta() {
                       Una vez emitida, la factura no se puede modificar (solo anular con nota de crédito). Si algo está mal, volvé y corregilo.
                     </p>
                     <p style={{ margin: '4px 0' }}><strong>Cliente:</strong> {clienteSeleccionado ? `${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido || ''}`.trim() : 'Consumidor final'}</p>
-                    <p style={{ margin: '4px 0' }}><strong>Forma de pago:</strong> {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` · ${cuotas} cuotas` : ''}</p>
+                    <p style={{ margin: '4px 0' }}><strong>Forma de pago:</strong> {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` · ${cuotas} cuotas` : ''}{enCuenta ? ' · A CUENTA CORRIENTE (se cobra después)' : ''}</p>
                     <table className="tabla" style={{ width: '100%', marginTop: 10 }}>
                       <thead><tr><th>Producto</th><th style={{ textAlign: 'right' }}>Cant.</th><th style={{ textAlign: 'right' }}>Importe</th></tr></thead>
                       <tbody>

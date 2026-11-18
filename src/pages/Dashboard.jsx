@@ -179,7 +179,7 @@ export default function Dashboard() {
               title="Ver la ganancia de cada venta"
             >
               <div className="stat-card-top">
-                <div className="label">Ganancia</div>
+                <div className="label">Ganancia bruta</div>
                 <span className="stat-icon">{ICONOS_STAT.ganancia}</span>
               </div>
               <div className="value">{formatoMoneda(data.ganancia)}</div>
@@ -191,7 +191,9 @@ export default function Dashboard() {
                   <div className="tooltip-fila"><span>− Mercado Pago</span><span>{formatoMoneda(data.desglose_ganancia.comisiones)}</span></div>
                   <div className="tooltip-fila"><span>− Costo de lo vendido</span><span>{formatoMoneda(data.desglose_ganancia.costo)}</span></div>
                   <div className="tooltip-separador" />
-                  <div className="tooltip-fila tooltip-total"><span>Ganancia</span><span>{formatoMoneda(data.ganancia)}</span></div>
+                  <div className="tooltip-fila tooltip-total"><span>Ganancia bruta</span><span>{formatoMoneda(data.ganancia)}</span></div>
+                  <div className="tooltip-fila"><span>− Gastos del negocio</span><span>{formatoMoneda(data.gastos_operativos)}</span></div>
+                  <div className="tooltip-fila tooltip-total"><span>Ganancia neta</span><span>{formatoMoneda(data.ganancia_neta)}</span></div>
                   {data.desglose_ganancia.lineas_estimadas > 0 && <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>{data.desglose_ganancia.lineas_estimadas} producto(s) vendidos antes del cambio usan el margen de hoy.</div>}
                   {data.desglose_ganancia.lineas_precio_manual > 0 && <div className="muted" style={{ fontSize: 11, marginTop: 6, maxWidth: 240, whiteSpace: 'normal' }}>{data.desglose_ganancia.lineas_precio_manual} producto(s) con precio manual: sin costo, todo es ganancia.</div>}
                 </div>
@@ -211,7 +213,7 @@ export default function Dashboard() {
             </div>
             <div className={`stat-card tooltip-host ${data.neto >= 0 ? 'positive' : 'negative'}`}>
               <div className="stat-card-top">
-                <div className="label">Neto</div>
+                <div className="label">Neto (caja)</div>
                 <span className="stat-icon">{ICONOS_STAT.neto}</span>
               </div>
               <div className="value">{formatoMoneda(data.neto)}</div>
@@ -222,9 +224,12 @@ export default function Dashboard() {
                   <span>{formatoMoneda(data.ingresos)}</span>
                 </div>
                 <div className="tooltip-fila">
-                  <span>− Gastos</span>
+                  <span>− Gastos (incluye stock y retiros)</span>
                   <span>{formatoMoneda(data.gastos_total ?? data.dona_gastos_por_tipo.reduce((acc, g) => acc + Number(g.total || 0), 0))}</span>
                 </div>
+                {data.gastos_retiros > 0 && (
+                  <div className="tooltip-fila muted"><span>de los cuales retiros</span><span>{formatoMoneda(data.gastos_retiros)}</span></div>
+                )}
                 <div className="tooltip-separador" />
                 <div className="tooltip-fila tooltip-total">
                   <span>Neto</span>

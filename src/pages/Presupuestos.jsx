@@ -912,7 +912,7 @@ export default function Presupuestos() {
             <div className="panel" style={{ marginTop: 16 }}>
               <h2>Forma de pago</h2>
               <select value={metodoPago} onChange={(e) => { setMetodoPago(e.target.value); setCuotas(1); }} style={{ width: '100%' }}>
-                {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
+                {METODOS_PAGO.filter((m) => m.clave !== 'cuenta_corriente').map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
               </select>
               {esMetodoCredito(metodoPago) && (
                 <select value={cuotas} onChange={(e) => setCuotas(Number(e.target.value))} style={{ width: '100%', marginTop: 8 }}>

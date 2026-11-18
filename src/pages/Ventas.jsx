@@ -248,7 +248,7 @@ export default function Ventas() {
                       <td>{String(v.fecha).slice(0, 10)}</td>
                       <td>{v.cliente_nombre ? `${v.cliente_nombre} ${v.cliente_apellido || ''}` : 'Consumidor final'}</td>
                       <td>{formatoMoneda(v.total)}</td>
-                      <td>{textoFormaPago(v.metodo_pago, v.cuotas)}</td>
+                      <td>{textoFormaPago(v.metodo_pago, v.cuotas)}{v.en_cuenta_corriente && v.metodo_pago !== 'cuenta_corriente' ? ' · a cuenta corriente' : ''}</td>
                       <td>
                         {v.afip_cae
                           ? <span style={{ color: 'var(--success)' }}>Facturada</span>
@@ -337,7 +337,7 @@ export default function Ventas() {
                                 ))}
                               </select>
                               <select value={editMetodoPago} onChange={(e) => setEditMetodoPago(e.target.value)}>
-                                {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
+                                {METODOS_PAGO.filter((m) => m.clave !== 'cuenta_corriente' || editMetodoPago === 'cuenta_corriente').map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
                               </select>
                               {esMetodoCredito(editMetodoPago) && (
                                 <select value={editCuotas} onChange={(e) => setEditCuotas(Number(e.target.value))}>
