@@ -17,6 +17,10 @@ export default function Ventas() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  // Filtros del listado: texto (nro de venta o cliente) y rango de fechas.
+  const [filtroQ, setFiltroQ] = useState('');
+  const [filtroDesde, setFiltroDesde] = useState('');
+  const [filtroHasta, setFiltroHasta] = useState('');
   const [error, setError] = useState(null);
   const [anulandoId, setAnulandoId] = useState(null);
 
@@ -82,11 +86,11 @@ export default function Ventas() {
     }
   }
 
-  async function cargar(paginaParam) {
+  async function cargar(paginaParam, filtros = { q: filtroQ, desde: filtroDesde, hasta: filtroHasta }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.get('/ventas', { page: paginaParam, pageSize: PAGE_SIZE });
+      const data = await api.get('/ventas', { page: paginaParam, pageSize: PAGE_SIZE, q: filtros.q, desde: filtros.desde, hasta: filtros.hasta });
       setVentas(data.ventas);
       setTotal(data.total);
     } catch (err) {
@@ -97,6 +101,18 @@ export default function Ventas() {
   }
 
   useEffect(() => { cargar(1); }, []);
+
+  function buscar(e) {
+    e?.preventDefault();
+    setPage(1);
+    cargar(1);
+  }
+
+  function limpiarFiltros() {
+    setFiltroQ(''); setFiltroDesde(''); setFiltroHasta('');
+    setPage(1);
+    cargar(1, { q: '', desde: '', hasta: '' });
+  }
 
   function cambiarPagina(p) {
     setPage(p);
@@ -136,11 +152,18 @@ export default function Ventas() {
   }
 
   async function anularVenta(id) {
-    const ok = await confirm('¿Anular esta venta? Se devuelve el stock de los productos vendidos.', { danger: true, confirmLabel: 'Anular venta' });
+    const venta = ventas.find((x) => x.id === id);
+    const facturada = !!venta?.afip_cae;
+    const ok = await confirm(
+      facturada
+        ? 'Esta venta TIENE FACTURA emitida. Anularla acá devuelve el stock pero NO anula la factura en AFIP: la nota de crédito la tenés que emitir aparte. ¿Anular igual?'
+        : '¿Anular esta venta? Se devuelve el stock de los productos vendidos.',
+      { danger: true, confirmLabel: 'Anular venta' }
+    );
     if (!ok) return;
     setAnulandoId(id);
     try {
-      await api.delete(`/ventas/${id}`);
+      await api.delete(`/ventas/${id}${facturada ? '?confirmar_facturada=1' : ''}`);
       setVentas((prev) => prev.filter((v) => v.id !== id));
       setTotal((t) => t - 1);
       toast('Venta anulada ✓');
@@ -185,6 +208,23 @@ export default function Ventas() {
       <h1>Ventas</h1>
 
       {error && <div className="error-box">{error}</div>}
+
+      <form className="panel" onSubmit={buscar} style={{ marginBottom: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+        <label className="campo" style={{ flex: '1 1 220px', margin: 0 }}>
+          <span>Buscar por N° de venta o cliente</span>
+          <input type="search" placeholder="Ej: 125 o Pérez" value={filtroQ} onChange={(e) => setFiltroQ(e.target.value)} />
+        </label>
+        <label className="campo" style={{ margin: 0 }}>
+          <span>Desde</span>
+          <input type="date" value={filtroDesde} onChange={(e) => setFiltroDesde(e.target.value)} />
+        </label>
+        <label className="campo" style={{ margin: 0 }}>
+          <span>Hasta</span>
+          <input type="date" value={filtroHasta} onChange={(e) => setFiltroHasta(e.target.value)} />
+        </label>
+        <button type="submit" className="btn-primary">Buscar</button>
+        {(filtroQ || filtroDesde || filtroHasta) && <button type="button" className="btn-secondary" onClick={limpiarFiltros}>Limpiar</button>}
+      </form>
 
       <div className="panel">
         {loading ? (

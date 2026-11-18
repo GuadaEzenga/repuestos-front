@@ -24,8 +24,8 @@ const ICONOS = {
   categoria: <Icono path={<><path d="M20.6 12.9 12 21.5 2.5 12 2.5 2.5 12 2.5z" /><circle cx="7" cy="7" r="1.3" /></>} />,
   cliente: <Icono path={<><circle cx="12" cy="8" r="3.5" /><path d="M4.5 20c1.4-3.5 4.2-5.5 7.5-5.5s6.1 2 7.5 5.5" /></>} />,
   gasto: <Icono path={<><rect x="3" y="6" width="18" height="13" rx="2" /><path d="M3 10h18" /><circle cx="16.5" cy="14" r="1.2" /></>} />,
+  cuentacorriente: <Icono path={<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 9h18M8 14h3M8 17h6" /></>} />,
   reporte: <Icono path={<><path d="M4 20V10M11 20V4M18 20v-7" /></>} />,
-  empleado: <Icono path={<><circle cx="12" cy="7" r="4" /><path d="M4 21v-2a7 7 0 0 1 14 0v2" /><path d="M17 4.5a4 4 0 0 1 0 7.8" /></>} />,
   configuracion: <Icono path={<><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.6-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.6V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.6 1H21a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.6 1z" /></>} />,
   mas: <Icono path={<><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></>} />,
 };
@@ -62,6 +62,7 @@ const NAV_SECTIONS = [
     titulo: 'Negocio',
     items: [
       { to: '/clientes', label: 'Clientes', icono: ICONOS.cliente },
+      { to: '/cuenta-corriente', label: 'Cuenta corriente', icono: ICONOS.cuentacorriente },
       { to: '/gastos', label: 'Gastos', icono: ICONOS.gasto },
       { to: '/reportes', label: 'Reportes', icono: ICONOS.reporte },
     ],
@@ -69,7 +70,6 @@ const NAV_SECTIONS = [
   {
     titulo: 'Sistema',
     items: [
-      { to: '/empleado', label: 'Empleado', icono: ICONOS.empleado },
       { to: '/configuracion', label: 'Configuración', icono: ICONOS.configuracion },
     ],
   },

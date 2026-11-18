@@ -360,6 +360,9 @@
      horizontalmente adentro del panel en vez de desbordar toda la página. */
   overflow-x: auto;
 }
+/* Un panel con menues desplegables (el "⋯" de las filas) no puede cortarlos:
+   con overflow-x:auto el menu de la ultima fila quedaba cortado al borde. */
+.panel:has(.menu-acciones-lista) { overflow: visible; }
 .panel h2 { margin: 0 0 12px; font-size: 15px; }
 
 /* Los paneles con gráfico de dona quedan estirados por el grid (misma
@@ -1405,3 +1408,26 @@ textarea, select {
 .resumen-lista { color: var(--text-muted); }
 .resumen-linea.total { font-size: 20px; border-top: 1px dashed var(--border); }
 .tilde-chico { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-muted); margin-top: 8px; cursor: pointer; }
+
+/* --- Productos: pestañas Productos / Historial de stock --- */
+.vista-tabs-barra { margin-bottom: 16px; }
+.vista-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+.vista-tabs button {
+  border: none;
+  background: transparent;
+  padding: 7px 16px;
+  border-radius: 999px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.vista-tabs button:hover { color: var(--text); }
+.vista-tabs button.activo { background: var(--primary); color: #fff; }

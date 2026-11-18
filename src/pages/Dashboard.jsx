@@ -240,6 +240,14 @@ export default function Dashboard() {
               <div className="value">{data.cantidad_ventas}</div>
               {dataAnterior && <Tendencia actual={data.cantidad_ventas} anterior={dataAnterior.cantidad_ventas} />}
             </div>
+            <div className="stat-card" title="Lo que los clientes todavía te deben por ventas a cuenta corriente (ya cuentan como ingreso el día de la venta)">
+              <div className="stat-card-top">
+                <div className="label">A cobrar (cuenta corriente)</div>
+                <span className="stat-icon">{ICONOS_STAT.neto}</span>
+              </div>
+              <div className="value">{formatoMoneda(data.cuenta_corriente_pendiente)}</div>
+              <div className="muted" style={{ fontSize: 12 }}>{data.cuenta_corriente_clientes || 0} cliente{data.cuenta_corriente_clientes === 1 ? '' : 's'} con deuda</div>
+            </div>
             <div className="stat-card">
               <div className="stat-card-top">
                 <div className="label">Gastos en stock</div>

@@ -41,6 +41,10 @@ export default function NuevaVenta() {
 
   const [busqueda, setBusqueda] = useState('');
   const [buscadorEnfocado, setBuscadorEnfocado] = useState(false);
+  // Pantalla de revision antes de guardar y emitir la factura.
+  const [revisando, setRevisando] = useState(false);
+  // Precio de tecnico sin cargar un cliente de la agenda.
+  const [tecnicoManual, setTecnicoManual] = useState(false);
   const [clienteBuscadorEnfocado, setClienteBuscadorEnfocado] = useState(false);
   const [presupuestoCargado, setPresupuestoCargado] = useState(null); // numero del presupuesto que se cargo al carrito, si vino de ahi
   const [presupuestoYaFacturado, setPresupuestoYaFacturado] = useState(false);
@@ -132,7 +136,7 @@ export default function NuevaVenta() {
   // Todos los clientes de la agenda son tecnicos -- si hay uno seleccionado,
   // se usa la tabla de descuentos tecnico; si no (venta de mostrador), la
   // publica. Misma logica que el backend (ver utils/pagos.js).
-  const esTecnico = !!clienteSeleccionado;
+  const esTecnico = !!clienteSeleccionado || tecnicoManual;
 
   // Precio de cada línea: se calcula en vivo con la forma de pago elegida,
   // porque los productos en oferta tienen un precio distinto según el método
@@ -322,7 +326,7 @@ export default function NuevaVenta() {
   function manejarKeyDownVenta(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
-      if (carrito.length > 0 && !guardando) confirmarVenta();
+      if (carrito.length > 0 && !guardando) setRevisando(true);
     }
   }
 
@@ -468,8 +472,14 @@ export default function NuevaVenta() {
 
   async function confirmarVenta() {
     if (carrito.length === 0) return;
+    if (metodoPago === 'cuenta_corriente' && !clienteSeleccionado) {
+      setErrorVenta('Para vender a cuenta corriente elegí un cliente de la agenda.');
+      setRevisando(false);
+      return;
+    }
     if (!facturacionVenta.valido) {
       setErrorVenta(facturacionVenta.error || 'Revisá los datos de facturación.');
+      setRevisando(false);
       return;
     }
     setGuardando(true);
@@ -485,8 +495,10 @@ export default function NuevaVenta() {
         detalle_kits: detalleKits,
         cuotas: esMetodoCredito(metodoPago) ? Number(cuotas) || 1 : null,
         facturacion: facturacionVenta.facturacion,
+        tecnico: !clienteSeleccionado && tecnicoManual,
       };
       const venta = await api.post('/ventas', body);
+      setRevisando(false);
       setVentaCreada(venta);
     } catch (err) {
       setErrorVenta(err.message);
@@ -508,6 +520,7 @@ export default function NuevaVenta() {
         notas: notas || null,
         titulo: tituloPresupuesto || null,
         detalle_kits: detalleKits,
+        tecnico: !clienteSeleccionado && tecnicoManual,
       });
       nuevaVentaLimpia();
       setPresupuestoGuardado(presupuesto);
@@ -540,6 +553,7 @@ export default function NuevaVenta() {
     setLineasSeleccionadas(new Set());
     setDescuentoLote('');
     setClienteSeleccionado(null);
+    setTecnicoManual(false);
     setBusquedaCliente('');
     setMetodoPago('efectivo');
     setCuotas(1);
@@ -930,6 +944,10 @@ export default function NuevaVenta() {
                     ))}
                   </ul>
                 )}
+                <label className="tilde-chico" title="Aplica el precio de técnico sin tener que cargar un cliente">
+                  <input type="checkbox" checked={tecnicoManual} onChange={(e) => setTecnicoManual(e.target.checked)} />
+                  Precio técnico (sin cargar cliente)
+                </label>
                 {!mostrarNuevoCliente ? (
                   <button type="button" className="btn-link" onClick={() => setMostrarNuevoCliente(true)}>+ Cliente nuevo</button>
                 ) : (
@@ -953,6 +971,13 @@ export default function NuevaVenta() {
             <select value={metodoPago} onChange={(e) => { setMetodoPago(e.target.value); setCuotas(1); }} style={{ width: '100%' }}>
               {METODOS_PAGO.map((m) => <option key={m.clave} value={m.clave}>{m.label}</option>)}
             </select>
+            {metodoPago === 'cuenta_corriente' && (
+              <p className="muted" style={{ fontSize: 12, margin: '8px 0 0' }}>
+                {clienteSeleccionado
+                  ? `No se cobra ahora: el total se suma al saldo de ${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido || ''}.`.trim()
+                  : 'Elegí un cliente de la agenda: la venta se suma a su cuenta corriente.'}
+              </p>
+            )}
             {esMetodoCredito(metodoPago) && (
               <label className="campo" style={{ marginTop: 10 }}>
                 <span>Cuotas sin interés (el recargo ya está sumado al total)</span>
@@ -1007,15 +1032,63 @@ export default function NuevaVenta() {
             {errorVenta && <p className="login-error">{errorVenta}</p>}
             <button
               type="button"
-              onClick={confirmarVenta}
+              onClick={() => setRevisando(true)}
               disabled={carrito.length === 0 || guardando || !facturacionVenta.valido}
               className="btn-primary"
               style={{ width: '100%', marginTop: 14, padding: 12 }}
             >
               {facturacionVenta.facturacion?.modo === 'no'
-                ? (guardando ? 'Guardando...' : 'Confirmar venta (sin factura)')
-                : (guardando ? 'Guardando y facturando...' : 'Confirmar venta y facturar')}
+                ? 'Revisar y confirmar venta'
+                : 'Revisar antes de facturar'}
             </button>
+            {revisando && (
+              <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !guardando) setRevisando(false); }}>
+                <div className="modal-ventana">
+                  <div className="modal-header">
+                    <h2>{facturacionVenta.facturacion?.modo === 'no' ? 'Revisá la venta' : 'Revisá antes de emitir la factura'}</h2>
+                    <button type="button" className="modal-cerrar" onClick={() => setRevisando(false)} disabled={guardando} aria-label="Cerrar">×</button>
+                  </div>
+                  <div className="modal-body">
+                    <p className="muted" style={{ marginTop: 0 }}>
+                      Una vez emitida, la factura no se puede modificar (solo anular con nota de crédito). Si algo está mal, volvé y corregilo.
+                    </p>
+                    <p style={{ margin: '4px 0' }}><strong>Cliente:</strong> {clienteSeleccionado ? `${clienteSeleccionado.nombre} ${clienteSeleccionado.apellido || ''}`.trim() : 'Consumidor final'}</p>
+                    <p style={{ margin: '4px 0' }}><strong>Forma de pago:</strong> {labelMetodo(metodoPago)}{esMetodoCredito(metodoPago) && cuotas > 1 ? ` · ${cuotas} cuotas` : ''}</p>
+                    <table className="tabla" style={{ width: '100%', marginTop: 10 }}>
+                      <thead><tr><th>Producto</th><th style={{ textAlign: 'right' }}>Cant.</th><th style={{ textAlign: 'right' }}>Importe</th></tr></thead>
+                      <tbody>
+                        {carrito.map((l, i) => {
+                          const imp = precioLinea(l) * cantidadNum(l) * (1 - (Number(l.descuentoPct) || 0) / 100);
+                          return (
+                            <tr key={i}>
+                              <td>{l.descripcion}{Number(l.descuentoPct) ? ` (${Number(l.descuentoPct) > 0 ? '−' : '+'}${Math.abs(Number(l.descuentoPct))}%)` : ''}</td>
+                              <td style={{ textAlign: 'right' }}>{cantidadNum(l)}</td>
+                              <td style={{ textAlign: 'right' }}>{formatoMoneda(imp)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                    <div className="resumen-totales" style={{ marginTop: 10 }}>
+                      {parseNumero(totalManual) == null && ajustePct !== 0 && (
+                        <div className="resumen-linea"><span>{ajustePct < 0 ? 'DESCUENTO' : 'RECARGO'} {String(Math.abs(Number(ajustePct.toFixed(2)))).replace('.', ',')}%</span><span>{formatoMoneda(montoAjuste)}</span></div>
+                      )}
+                      <div className="resumen-linea total"><span>Total</span><span>{formatoMoneda(totalAcobrar)}</span></div>
+                    </div>
+                    <p className="muted" style={{ fontSize: 12 }}>
+                      {facturacionVenta.facturacion?.modo === 'no' ? 'Sin factura.' : facturacionVenta.facturacion?.modo === 'cliente' ? 'Se factura con los datos fiscales cargados para el cliente.' : 'Se factura a nombre de tu negocio.'}
+                    </p>
+                    {errorVenta && <p className="login-error">{errorVenta}</p>}
+                    <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+                      <button type="button" className="btn-secondary" style={{ flex: 1 }} onClick={() => setRevisando(false)} disabled={guardando}>Volver y modificar</button>
+                      <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={confirmarVenta} disabled={guardando}>
+                        {facturacionVenta.facturacion?.modo === 'no' ? (guardando ? 'Guardando...' : 'Confirmar venta') : (guardando ? 'Guardando y facturando...' : 'Confirmar y emitir factura')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {!mostrarComoPresupuesto ? (
               <button
                 type="button"

@@ -28,13 +28,15 @@ export default function Devoluciones() {
   const [ventaSeleccionada, setVentaSeleccionada] = useState(null);
 
   // --- Formulario de devolucion/cambio ---
-  const [itemId, setItemId] = useState('');
-  const [cantidad, setCantidad] = useState('');
+  // Cantidad a devolver por cada producto de la venta ({ [venta_item_id]: '2' })
+  // y devoluciones anteriores de esa venta (para saber cuanto queda por devolver).
+  const [cantidadesDevolver, setCantidadesDevolver] = useState({});
+  const [devolucionesPrevias, setDevolucionesPrevias] = useState([]);
   const [tipo, setTipo] = useState('reembolso');
   const [busquedaProductoNuevo, setBusquedaProductoNuevo] = useState('');
   const [resultadosProductoNuevo, setResultadosProductoNuevo] = useState([]);
-  const [productoNuevo, setProductoNuevo] = useState(null);
-  const [cantidadNueva, setCantidadNueva] = useState('1');
+  // Productos nuevos del cambio: [{ producto, cantidad: '1' }]
+  const [nuevos, setNuevos] = useState([]);
   const [notas, setNotas] = useState('');
   // Forma de pago de la devolución/cambio (arranca en la de la venta).
   const [metodoDevolucion, setMetodoDevolucion] = useState('efectivo');
@@ -109,11 +111,34 @@ export default function Devoluciones() {
     setMetodoDevolucion(data.metodo_pago || 'efectivo');
     setAbiertoDetalleVenta(null);
     setDetalleVentaTabla(null);
-    setItemId('');
-    setCantidad('');
-    setProductoNuevo(null);
+    setCantidadesDevolver({});
+    setNuevos([]);
+    setTipo('reembolso');
     setBusquedaProductoNuevo('');
+    setResultadosProductoNuevo([]);
     setUltimoResultado(null);
+    try {
+      const previas = await api.get(`/devoluciones/venta/${id}`);
+      setDevolucionesPrevias(previas.devoluciones);
+    } catch {
+      setDevolucionesPrevias([]);
+    }
+  }
+
+  // Cuanto se puede devolver todavia de cada producto de la venta.
+  function disponibleDe(item) {
+    if (!ventaSeleccionada) return 0;
+    const vendido = ventaSeleccionada.items.filter((it) => it.producto_id === item.producto_id).reduce((a, it) => a + Number(it.cantidad), 0);
+    const devuelto = devolucionesPrevias.filter((d) => d.producto_id === item.producto_id).reduce((a, d) => a + Number(d.cantidad || 0), 0);
+    return Math.max(0, Math.min(Number(item.cantidad), vendido - devuelto));
+  }
+
+  function agregarProductoNuevo(producto) {
+    setNuevos((prev) => (prev.some((n) => n.producto.id === producto.id)
+      ? prev.map((n) => (n.producto.id === producto.id ? { ...n, cantidad: String((parseNumero(n.cantidad) || 0) + 1) } : n))
+      : [...prev, { producto, cantidad: '1' }]));
+    setResultadosProductoNuevo([]);
+    setBusquedaProductoNuevo('');
   }
 
   async function buscarProductoNuevo(texto) {
@@ -123,28 +148,31 @@ export default function Devoluciones() {
     setResultadosProductoNuevo(data.productos);
   }
 
+  // Lo que se devuelve, ya validado: [{ item, cantidad }]
+  const devueltosElegidos = (ventaSeleccionada?.items || [])
+    .map((it) => ({ item: it, cantidad: parseNumero(cantidadesDevolver[it.id]) }))
+    .filter((d) => d.cantidad != null && d.cantidad > 0);
+  const excedeAlgunItem = devueltosElegidos.some((d) => d.cantidad > disponibleDe(d.item) + 1e-9);
+  const nuevosValidos = nuevos.map((n) => ({ producto: n.producto, cantidad: parseNumero(n.cantidad) }));
+  const nuevosIncompletos = tipo === 'cambio' && (nuevosValidos.length === 0 || nuevosValidos.some((n) => n.cantidad == null || n.cantidad <= 0));
+
   async function confirmar(e) {
     e.preventDefault();
-    if (!itemId || !cantidad) return;
-    if (tipo === 'cambio' && !productoNuevo) return;
+    if (devueltosElegidos.length === 0 || excedeAlgunItem || nuevosIncompletos) return;
     setGuardando(true);
     setError(null);
     try {
       const resultado = await api.post('/devoluciones', {
         venta_id: ventaSeleccionada.id,
-        venta_item_id: Number(itemId),
-        cantidad: parseNumero(cantidad),
-        tipo,
-        producto_nuevo_id: tipo === 'cambio' ? productoNuevo.id : null,
-        cantidad_nueva: tipo === 'cambio' ? parseNumero(cantidadNueva) : null,
+        devueltos: devueltosElegidos.map((d) => ({ venta_item_id: d.item.id, cantidad: d.cantidad })),
+        nuevos: tipo === 'cambio' ? nuevosValidos.map((n) => ({ producto_id: n.producto.id, cantidad: n.cantidad })) : [],
         notas: notas || null,
         metodo_pago: metodoDevolucion,
       });
       setUltimoResultado(resultado);
       setVentaSeleccionada(null);
-      setItemId('');
-      setCantidad('');
-      setProductoNuevo(null);
+      setCantidadesDevolver({});
+      setNuevos([]);
       setNotas('');
       cargarHistorial(1);
       setPage(1);
@@ -163,19 +191,33 @@ export default function Devoluciones() {
 
   const totalPaginas = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
+  // Una operacion (varios productos) son varias filas con el mismo
+  // operacion_id: se muestran juntas en una sola fila del historial. Las
+  // viejas (sin operacion_id) son una fila cada una.
+  const historialAgrupado = useMemo(() => {
+    const grupos = new Map();
+    for (const d of historial) {
+      const clave = d.operacion_id ? `op-${d.operacion_id}` : `fila-${d.id}`;
+      if (!grupos.has(clave)) {
+        grupos.set(clave, { clave, fecha: d.fecha, venta_id: d.venta_id, tipo: d.tipo, metodo_pago: d.metodo_pago, pendiente: Number(d.pendiente_nota_credito) === 1, devueltos: [], nuevos: [], total: 0 });
+      }
+      const g = grupos.get(clave);
+      if (d.descripcion && Number(d.cantidad) > 0) g.devueltos.push(`${d.cantidad} × ${d.descripcion}`);
+      if (d.descripcion_nueva) g.nuevos.push(`${d.cantidad_nueva} × ${d.descripcion_nueva}`);
+      g.total += Number(d.monto_diferencia) || 0;
+    }
+    return [...grupos.values()];
+  }, [historial]);
+
   // Vista previa EN VIVO de la diferencia a favor/en contra: se recalcula
   // apenas se elige producto+cantidad(+producto nuevo/cantidad nueva si es
   // cambio), sin esperar a confirmar. Misma lógica que el backend
   // (devoluciones.js): respeta el factor de descuento real de la venta
   // (total/subtotal original), no el precio de lista.
-  const itemSeleccionado = ventaSeleccionada?.items.find((it) => String(it.id) === String(itemId)) || null;
   const unidadRedondeo = Number(config?.redondeo_unidad || 10);
-  const cantidadNum = parseNumero(cantidad);
-  const cantidadNuevaNum = parseNumero(cantidadNueva);
 
   const previewDiferencia = useMemo(() => {
-    if (!ventaSeleccionada || !itemSeleccionado || !config) return null;
-    if (cantidadNum == null || cantidadNum <= 0 || cantidadNum > Number(itemSeleccionado.cantidad)) return null;
+    if (!ventaSeleccionada || !config || devueltosElegidos.length === 0 || excedeAlgunItem) return null;
     // Misma lógica que el backend: con la misma forma de pago de la venta se
     // devuelve lo que pagó; con otra, se valora con el % de esa forma de pago.
     const subtotalVenta = Number(ventaSeleccionada.subtotal) || 0;
@@ -185,20 +227,23 @@ export default function Devoluciones() {
       ? (subtotalVenta > 0 ? Number(ventaSeleccionada.total) / subtotalVenta : 1)
       : 1 + porcentajeSobreLista(config, metodoDevolucion, esTecnicoVenta, 1) / 100;
     const redondearMonto = (v) => (metodoDevolucion === 'efectivo' ? redondear(v, unidadRedondeo) : Math.round(v * 100) / 100);
-    const montoDevuelto = Number(itemSeleccionado.precio_unitario) * factor * cantidadNum;
+    const montoDevuelto = devueltosElegidos.reduce((acc, d) => acc + Number(d.item.precio_unitario) * factor * d.cantidad, 0);
 
     let montoDiferencia;
     if (tipo === 'cambio') {
-      if (!productoNuevo || cantidadNuevaNum == null || cantidadNuevaNum <= 0) return null;
-      const precioOriginalNuevo = Number(precioListaProducto(productoNuevo, config, { metodo: metodoDevolucion, esTecnico: esTecnicoVenta, cuotas: 1 }) ?? 0);
-      const montoNuevo = precioOriginalNuevo * factor * cantidadNuevaNum;
+      if (nuevosIncompletos) return null;
+      const montoNuevo = nuevosValidos.reduce((acc, n) => {
+        const precio = Number(precioListaProducto(n.producto, config, { metodo: metodoDevolucion, esTecnico: esTecnicoVenta, cuotas: 1 }) ?? 0);
+        return acc + precio * factor * n.cantidad;
+      }, 0);
       montoDiferencia = redondearMonto(montoNuevo - montoDevuelto);
     } else {
       montoDiferencia = redondearMonto(-montoDevuelto);
     }
     const nuevoTotal = Math.round((Number(ventaSeleccionada.total) + montoDiferencia) * 100) / 100;
     return { montoDiferencia, nuevoTotal, montoDevuelto };
-  }, [ventaSeleccionada, itemSeleccionado, cantidadNum, tipo, productoNuevo, cantidadNuevaNum, unidadRedondeo, metodoDevolucion, config]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ventaSeleccionada, cantidadesDevolver, tipo, nuevos, unidadRedondeo, metodoDevolucion, config, devolucionesPrevias]);
 
   return (
     <div className="page">
@@ -212,7 +257,7 @@ export default function Devoluciones() {
         {!ventaSeleccionada ? (
           <>
             <p className="muted" style={{ marginTop: 0 }}>
-              Elegí la venta: mirá el detalle si hace falta y clickeá "Seleccionar" para elegir qué producto devolver o cambiar.
+              Elegí la venta: mirá el detalle si hace falta y clickeá "Seleccionar" para elegir qué productos devolver o cambiar.
             </p>
             <input
               placeholder="Buscar por N° de venta o cliente..."
@@ -288,62 +333,88 @@ export default function Devoluciones() {
               <button type="button" className="btn-link" onClick={() => setVentaSeleccionada(null)}>Cambiar venta</button>
             </div>
 
-            <select value={itemId} onChange={(e) => setItemId(e.target.value)} style={{ width: '100%', marginBottom: 10 }} required>
-              <option value="">Elegí el producto a devolver...</option>
-              {ventaSeleccionada.items.map((it) => (
-                <option key={it.id} value={it.id}>{it.descripcion} (vendidos: {it.cantidad})</option>
-              ))}
-            </select>
+            <p className="muted" style={{ margin: '0 0 6px', fontSize: 13 }}>Poné la cantidad que devuelve de cada producto (podés elegir varios):</p>
+            <table className="simple-table" style={{ marginBottom: 10 }}>
+              <thead><tr><th>Producto</th><th>Vendidos</th><th>Se puede devolver</th><th style={{ width: 130 }}>Devolver</th></tr></thead>
+              <tbody>
+                {ventaSeleccionada.items.map((it) => {
+                  const disponible = disponibleDe(it);
+                  const valor = cantidadesDevolver[it.id] ?? '';
+                  const num = parseNumero(valor);
+                  const excede = num != null && num > disponible + 1e-9;
+                  return (
+                    <tr key={it.id} style={disponible <= 0 ? { opacity: 0.5 } : undefined}>
+                      <td>{it.descripcion}</td>
+                      <td>{it.cantidad}</td>
+                      <td>{disponible > 0 ? disponible : 'Ya devuelto'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <input
+                            type="text" inputMode="decimal" placeholder="0"
+                            value={valor} disabled={disponible <= 0}
+                            onChange={(e) => setCantidadesDevolver((prev) => ({ ...prev, [it.id]: e.target.value }))}
+                            style={{ width: 70, ...(excede ? { borderColor: 'var(--danger)' } : {}) }}
+                          />
+                          {disponible > 0 && (
+                            <button type="button" className="btn-link" onClick={() => setCantidadesDevolver((prev) => ({ ...prev, [it.id]: String(disponible) }))}>Todo</button>
+                          )}
+                        </div>
+                        {excede && <span style={{ color: 'var(--danger)', fontSize: 12 }}>Máximo {disponible}</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
 
             <div className="form-row" style={{ marginBottom: 10 }}>
-              <input
-                type="text" inputMode="decimal"
-                placeholder="Cantidad a devolver"
-                value={cantidad}
-                onChange={(e) => setCantidad(e.target.value)}
-                required
-              />
               <select value={tipo} onChange={(e) => setTipo(e.target.value)}>
                 <option value="reembolso">Reembolso (devolver plata)</option>
-                <option value="cambio">Cambio por otro producto</option>
+                <option value="cambio">Cambio por otros productos</option>
               </select>
             </div>
 
             {tipo === 'cambio' && (
               <div style={{ position: 'relative', marginBottom: 10 }}>
-                {productoNuevo ? (
-                  <div className="cliente-chip">
-                    <span>{productoNuevo.descripcion}</span>
-                    <button type="button" className="btn-link" onClick={() => setProductoNuevo(null)}>Cambiar</button>
-                  </div>
-                ) : (
-                  <>
-                    <input
-                      className="buscador"
-                      placeholder="Buscar el producto nuevo..."
-                      value={busquedaProductoNuevo}
-                      onChange={(e) => buscarProductoNuevo(e.target.value)}
-                    />
-                    {resultadosProductoNuevo.length > 0 && (
-                      <ul className="resultados-lista" style={{ position: 'absolute', width: '100%', zIndex: 10, background: 'white' }}>
-                        {resultadosProductoNuevo.map((p) => (
-                          <li key={p.id} onClick={() => { setProductoNuevo(p); setResultadosProductoNuevo([]); setBusquedaProductoNuevo(''); }}>
-                            <span>{p.descripcion}</span>
-                            <span className="muted">Stock: {p.stock}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </>
+                <input
+                  className="buscador"
+                  placeholder="Buscar y agregar un producto nuevo..."
+                  value={busquedaProductoNuevo}
+                  onChange={(e) => buscarProductoNuevo(e.target.value)}
+                />
+                {resultadosProductoNuevo.length > 0 && (
+                  <ul className="resultados-lista" style={{ background: 'var(--surface)', maxHeight: 260 }}>
+                    {resultadosProductoNuevo.map((p) => (
+                      <li key={p.id} onClick={() => agregarProductoNuevo(p)}>
+                        <span>{p.descripcion}</span>
+                        <span className="muted">Stock: {p.stock}</span>
+                      </li>
+                    ))}
+                  </ul>
                 )}
-                {productoNuevo && (
-                  <input
-                    type="text" inputMode="decimal"
-                    placeholder="Cantidad nueva"
-                    value={cantidadNueva}
-                    onChange={(e) => setCantidadNueva(e.target.value)}
-                    style={{ marginTop: 8, width: 140 }}
-                  />
+                {nuevos.length > 0 && (
+                  <table className="simple-table" style={{ marginTop: 8 }}>
+                    <thead><tr><th>Producto nuevo</th><th>Stock</th><th style={{ width: 110 }}>Cantidad</th><th /></tr></thead>
+                    <tbody>
+                      {nuevos.map((n) => {
+                        const cant = parseNumero(n.cantidad);
+                        const sinStock = cant != null && cant > Number(n.producto.stock);
+                        return (
+                          <tr key={n.producto.id}>
+                            <td>{n.producto.descripcion}</td>
+                            <td style={sinStock ? { color: 'var(--danger)' } : undefined}>{n.producto.stock}</td>
+                            <td>
+                              <input
+                                type="text" inputMode="decimal" value={n.cantidad} style={{ width: 70 }}
+                                onChange={(e) => setNuevos((prev) => prev.map((x) => (x.producto.id === n.producto.id ? { ...x, cantidad: e.target.value } : x)))}
+                              />
+                            </td>
+                            <td><button type="button" className="btn-link" onClick={() => setNuevos((prev) => prev.filter((x) => x.producto.id !== n.producto.id))}>Quitar</button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 )}
               </div>
             )}
@@ -375,7 +446,7 @@ export default function Devoluciones() {
               </div>
             )}
 
-            <button type="submit" className="btn-primary" disabled={guardando}>
+            <button type="submit" className="btn-primary" disabled={guardando || devueltosElegidos.length === 0 || excedeAlgunItem || nuevosIncompletos}>
               {guardando ? 'Guardando...' : 'Confirmar'}
             </button>
           </form>
@@ -387,7 +458,7 @@ export default function Devoluciones() {
               Listo. Diferencia en el total de la venta: <strong>{formatoMoneda(ultimoResultado.monto_diferencia)}</strong>
               {' '}— nuevo total: <strong>{formatoMoneda(ultimoResultado.venta_total_nuevo)}</strong>
             </p>
-            {ultimoResultado.pendiente_nota_credito === 1 && (
+            {Number(ultimoResultado.pendiente_nota_credito) === 1 && (
               <p className="muted" style={{ marginBottom: 0 }}>
                 Esa venta ya tenía factura con CAE — queda marcada como pendiente de nota de crédito ante AFIP.
               </p>
@@ -404,23 +475,22 @@ export default function Devoluciones() {
           <>
             <table className="simple-table">
               <thead>
-                <tr><th>Fecha</th><th>Venta</th><th>Producto devuelto</th><th>Cant.</th><th>Tipo</th><th>Producto nuevo</th><th>Diferencia</th><th>Forma de pago</th><th>Nota crédito</th></tr>
+                <tr><th>Fecha</th><th>Venta</th><th>Productos devueltos</th><th>Tipo</th><th>Productos nuevos</th><th>Diferencia</th><th>Forma de pago</th><th>Nota crédito</th></tr>
               </thead>
               <tbody>
                 {historial.length === 0 && (
-                  <tr><td colSpan={9} className="muted">Sin devoluciones registradas</td></tr>
+                  <tr><td colSpan={8} className="muted">Sin devoluciones registradas</td></tr>
                 )}
-                {historial.map((d) => (
-                  <tr key={d.id}>
-                    <td>{String(d.fecha).slice(0, 10)}</td>
-                    <td>#{d.venta_id}</td>
-                    <td>{d.descripcion}</td>
-                    <td>{d.cantidad}</td>
-                    <td>{d.tipo === 'cambio' ? 'Cambio' : 'Reembolso'}</td>
-                    <td>{d.descripcion_nueva || '—'}</td>
-                    <td>{formatoMoneda(d.monto_diferencia)}</td>
-                    <td>{d.metodo_pago ? labelMetodo(d.metodo_pago) : '—'}</td>
-                    <td>{d.pendiente_nota_credito === 1 ? 'Pendiente' : '—'}</td>
+                {historialAgrupado.map((g) => (
+                  <tr key={g.clave}>
+                    <td>{String(g.fecha).slice(0, 10)}</td>
+                    <td>#{g.venta_id}</td>
+                    <td>{g.devueltos.length === 0 ? '—' : g.devueltos.map((t) => <div key={t}>{t}</div>)}</td>
+                    <td>{g.tipo === 'cambio' ? 'Cambio' : 'Reembolso'}</td>
+                    <td>{g.nuevos.length === 0 ? '—' : g.nuevos.map((t) => <div key={t}>{t}</div>)}</td>
+                    <td>{formatoMoneda(g.total)}</td>
+                    <td>{g.metodo_pago ? labelMetodo(g.metodo_pago) : '—'}</td>
+                    <td>{g.pendiente ? 'Pendiente' : '—'}</td>
                   </tr>
                 ))}
               </tbody>

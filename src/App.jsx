@@ -16,7 +16,7 @@ import Categorias from './pages/Categorias';
 import Clientes from './pages/Clientes';
 import Gastos from './pages/Gastos';
 import Reportes from './pages/Reportes';
-import Empleado from './pages/Empleado';
+import CuentaCorriente from './pages/CuentaCorriente';
 import Configuracion from './pages/Configuracion';
 import './App.css';
 
@@ -44,9 +44,9 @@ export default function App() {
             <Route path="/grupos" element={<Grupos />} />
             <Route path="/categorias" element={<Categorias />} />
             <Route path="/clientes" element={<Clientes />} />
+            <Route path="/cuenta-corriente" element={<CuentaCorriente />} />
             <Route path="/gastos" element={<Gastos />} />
             <Route path="/reportes" element={<Reportes />} />
-            <Route path="/empleado" element={<Empleado />} />
             <Route path="/configuracion" element={<Configuracion />} />
           </Route>
         </Routes>

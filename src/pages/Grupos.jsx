@@ -161,7 +161,7 @@ export default function Grupos() {
                 onChange={(e) => buscarProducto(e.target.value)}
               />
               {resultadosProducto.length > 0 && (
-                <ul className="resultados-lista" style={{ position: 'absolute', width: '100%', zIndex: 10, background: 'white' }}>
+                <ul className="resultados-lista" style={{ background: 'var(--surface)', maxHeight: 260 }}>
                   {resultadosProducto.map((p) => (
                     <li key={p.id} onClick={() => agregarItem(p)}>
                       <span>{p.descripcion}</span>

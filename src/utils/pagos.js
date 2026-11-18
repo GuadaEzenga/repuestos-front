@@ -12,6 +12,7 @@ export const IVA_COMISION = 1.21;
 export const METODOS_PAGO = [
   { clave: 'efectivo', label: 'Efectivo', grupo: 'Sin comisión' },
   { clave: 'transferencia', label: 'Transferencia', grupo: 'Sin comisión' },
+  { clave: 'cuenta_corriente', label: 'Cuenta corriente', grupo: 'Cuenta corriente' },
   { clave: 'qr_dinero_mp', label: 'QR - Dinero en Mercado Pago', grupo: 'QR' },
   { clave: 'qr_otra_billetera', label: 'QR - Otra billetera o banco', grupo: 'QR' },
   { clave: 'qr_debito', label: 'QR - Tarjeta de débito', grupo: 'QR' },
@@ -26,6 +27,7 @@ export const METODOS_PAGO = [
 export const DEFAULT_COMISIONES = {
   efectivo: 0,
   transferencia: 0,
+  cuenta_corriente: 0,
   qr_dinero_mp: 0.8,
   qr_otra_billetera: 0,
   qr_debito: 0.89,
@@ -40,16 +42,16 @@ export const DEFAULT_COSTOS_CUOTAS = { 2: 7.79, 3: 10.49, 6: 18.69, 9: 26.49, 12
 export const CUOTAS_POSIBLES = [1, 2, 3, 6, 9, 12, 18];
 export const DEFAULT_CUOTAS_MAX = 3;
 export const DEFAULT_IMPUESTO_COBROS = 0.6;
-const METODOS_SIN_IMPUESTO = new Set(['efectivo', 'transferencia']);
+const METODOS_SIN_IMPUESTO = new Set(['efectivo', 'transferencia', 'cuenta_corriente']);
 
 export const DEFAULT_PORCENTAJES = {
   publico: {
-    efectivo: -10, transferencia: -5,
+    efectivo: -10, transferencia: -5, cuenta_corriente: 0,
     qr_dinero_mp: 0, qr_otra_billetera: 0, qr_debito: 0, qr_prepaga: 0, qr_credito: 5,
     tarjeta_debito: 0, tarjeta_prepaga: 0, tarjeta_credito: 5, tarjeta_credito_extranjera: 10,
   },
   tecnico: {
-    efectivo: -15, transferencia: -10,
+    efectivo: -15, transferencia: -10, cuenta_corriente: 0,
     qr_dinero_mp: -5, qr_otra_billetera: -5, qr_debito: -5, qr_prepaga: -5, qr_credito: 5,
     tarjeta_debito: -5, tarjeta_prepaga: -5, tarjeta_credito: 5, tarjeta_credito_extranjera: 10,
   },
