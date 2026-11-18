@@ -336,7 +336,7 @@ export default function NuevaVenta() {
   function manejarKeyDownVenta(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault();
-      if (carrito.length > 0 && !guardando) setRevisando(true);
+      if (carrito.length > 0 && !guardando) { if (facturacionVenta.facturacion?.modo === 'no') confirmarVenta(); else setRevisando(true); }
     }
   }
 
@@ -1051,20 +1051,20 @@ export default function NuevaVenta() {
             {errorVenta && <p className="login-error">{errorVenta}</p>}
             <button
               type="button"
-              onClick={() => setRevisando(true)}
+              onClick={() => (facturacionVenta.facturacion?.modo === 'no' ? confirmarVenta() : setRevisando(true))}
               disabled={carrito.length === 0 || guardando || !facturacionVenta.valido}
               className="btn-primary"
               style={{ width: '100%', marginTop: 14, padding: 12 }}
             >
               {facturacionVenta.facturacion?.modo === 'no'
-                ? 'Revisar y confirmar venta'
+                ? (guardando ? 'Guardando...' : 'Confirmar venta (sin factura)')
                 : 'Revisar antes de facturar'}
             </button>
             {revisando && (
               <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !guardando) setRevisando(false); }}>
-                <div className="modal-ventana">
+                <div className="modal-ventana modal-ventana-vertical" style={{ maxWidth: 460, padding: 16 }}>
                   <div className="modal-header">
-                    <h2>{facturacionVenta.facturacion?.modo === 'no' ? 'Revisá la venta' : 'Revisá antes de emitir la factura'}</h2>
+                    <h2 style={{ fontSize: 17 }}>Revisá antes de emitir la factura</h2>
                     <button type="button" className="modal-cerrar" onClick={() => setRevisando(false)} disabled={guardando} aria-label="Cerrar">×</button>
                   </div>
                   <div className="modal-body">

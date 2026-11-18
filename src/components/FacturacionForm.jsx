@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../api/client';
 
 export const CONDICIONES_FISCALES = ['Consumidor Final', 'Responsable Inscripto', 'Monotributista', 'Exento', 'No Responsable'];
@@ -10,8 +10,10 @@ export function resumenDatoFacturacion(d) {
 
 // Formulario "¿A quién se factura?" con dos botones:
 // - "A mí": Consumidor Final sin identificar, sin más.
-// Los datos se cargan a mano (la consulta al padron de AFIP no funcionaba)
-// y quedan guardados en el cliente para autocompletar la proxima vez.
+// Al completar un CUIT/CUIL de 11 digitos se consulta el padron de ARCA y se
+// completan razon social y domicilio (se pueden corregir a mano). Si ARCA no
+// responde, se cargan a mano. Los datos quedan guardados en el cliente para
+// autocompletar la proxima vez.
 // - "A cliente": datos fiscales (razón social, CUIT/CUIL/DNI, condición
 //   frente al IVA, domicilio). Si la venta tiene un cliente de la agenda,
 //   se puede elegir uno de sus datos guardados para autocompletar, o
@@ -43,6 +45,34 @@ export default function FacturacionForm({ clienteId = null, onChange, compacto =
   const [datosGuardados, setDatosGuardados] = useState([]);
   const [datoId, setDatoId] = useState('');
   const [cargando, setCargando] = useState(false);
+
+  // Consulta al padron de ARCA por CUIT/CUIL (completa razon social y domicilio).
+  const [padron, setPadron] = useState({ estado: 'idle', mensaje: null, condicion: null });
+  const busquedaPadronRef = useRef(0);
+  async function buscarPadron(doc) {
+    const id = ++busquedaPadronRef.current;
+    setPadron({ estado: 'buscando', mensaje: null, condicion: null });
+    try {
+      const d = await api.get(`/clientes/padron/${doc}`);
+      if (id !== busquedaPadronRef.current) return; // llego tarde: el documento ya cambio
+      setCampos((x) => ({
+        ...x,
+        nombre: d.razonSocial ? String(d.razonSocial).toUpperCase() : x.nombre,
+        direccion: d.domicilio ? String(d.domicilio).toUpperCase() : x.direccion,
+      }));
+      setPadron({ estado: 'ok', mensaje: null, condicion: d.condicionFiscal || null });
+    } catch (err) {
+      if (id !== busquedaPadronRef.current) return;
+      setPadron({ estado: 'error', mensaje: err.message || 'No se pudo consultar ARCA', condicion: null });
+    }
+  }
+  function cambiarDocumento(valor) {
+    busquedaPadronRef.current += 1; // invalida cualquier consulta en curso
+    setPadron({ estado: 'idle', mensaje: null, condicion: null });
+    form.setDocumento(valor);
+    const limpio = valor.replace(/\D/g, '');
+    if (limpio.length === 11) buscarPadron(limpio);
+  }
 
   // Al cambiar de cliente, se traen sus datos de facturacion. Si tiene
   // alguno, arranca en "A cliente" con el primero ya cargado.
@@ -183,10 +213,23 @@ export default function FacturacionForm({ clienteId = null, onChange, compacto =
             <input
               placeholder={esCF ? 'Documento (opcional)' : 'Número de CUIT/CUIL'}
               value={c.documento}
-              onChange={(e) => form.setDocumento(e.target.value)}
+              onChange={(e) => cambiarDocumento(e.target.value)}
               inputMode="numeric"
             />
+            <button type="button" className="btn-secondary" disabled={docLimpio.length !== 11 || padron.estado === 'buscando'} onClick={() => buscarPadron(docLimpio)} title="Buscar razón social y domicilio en ARCA">
+              {padron.estado === 'buscando' ? 'Buscando...' : 'Buscar en ARCA'}
+            </button>
           </div>
+          {padron.estado === 'ok' && (
+            <p className="muted" style={{ fontSize: 12, margin: '4px 0 0' }}>
+              ✓ Datos traídos de ARCA{padron.condicion ? ` (condición sugerida: ${padron.condicion}; revisá que la de arriba sea la correcta)` : ''}.
+            </p>
+          )}
+          {padron.estado === 'error' && (
+            <p className="login-error" style={{ margin: '4px 0 0' }}>
+              No se pudo traer de ARCA: {padron.mensaje} Cargá los datos a mano.
+            </p>
+          )}
           <input
             placeholder={esCF ? 'Nombre y apellido / Razón social (opcional)' : 'Razón social'}
             value={c.nombre}

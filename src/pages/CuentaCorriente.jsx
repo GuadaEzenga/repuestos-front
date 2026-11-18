@@ -169,6 +169,23 @@ export default function CuentaCorriente() {
     }
   }
 
+  async function anularVentaCC(v) {
+    const ok = await confirm(
+      `¿Anular la venta #${v.numero} de ${moneda(v.total_original)}? Vuelve el stock de los productos y deja de contar en la cuenta.`
+      + (v.pagado > 0 ? ` Lo que ya pagó (${moneda(v.pagado)}) queda como saldo a favor del cliente.` : '')
+      + (v.facturada ? ' OJO: tiene factura emitida; anularla acá no anula la factura en ARCA (la nota de crédito se emite aparte).' : ''),
+      { danger: true, confirmLabel: 'Anular venta' }
+    );
+    if (!ok) return;
+    try {
+      await api.delete(`/ventas/${v.id}${v.facturada ? '?confirmar_facturada=1' : ''}`);
+      toast('Venta anulada ✓');
+      await cargarCuenta(abiertoId);
+    } catch (err) {
+      toast(err.message, { type: 'error', duration: 8000 });
+    }
+  }
+
   function pagarVenta(v) {
     cerrarForm();
     setVentaPago(v);
@@ -311,9 +328,8 @@ export default function CuentaCorriente() {
                               ? <span style={{ color: 'var(--success)', fontWeight: 700 }}>Saldada</span>
                               : <span style={{ color: 'var(--danger)', fontWeight: 700 }}>Falta {moneda(v.pendiente)}</span>}
                             {!v.saldada && <button type="button" className="btn-primary" onClick={() => pagarVenta(v)}>Registrar pago</button>}
-                            {v.metodo_pago !== 'cuenta_corriente' && (
-                              <button type="button" className="btn-secondary" onClick={() => setEditForma({ id: v.id, metodo: v.metodo_pago, cuotas: 1 })} title="Cambiar con qué precio se cobra (ej. de efectivo a transferencia)">Cambiar forma de pago</button>
-                            )}
+                            <button type="button" className="btn-secondary" onClick={() => setEditForma({ id: v.id, metodo: v.metodo_pago === 'cuenta_corriente' ? 'efectivo' : v.metodo_pago, cuotas: 1 })} title="Cambiar con qué precio se cobra (ej. de efectivo a transferencia)">Cambiar forma de pago</button>
+                            <button type="button" className="btn-secondary" onClick={() => anularVentaCC(v)} title="Anular esta venta: vuelve el stock y deja de contar en la cuenta">Anular</button>
                             <button type="button" className="btn-secondary" onClick={() => setVentasAbiertas((prev) => ({ ...prev, [v.id]: !prev[v.id] }))}>{abierta ? 'Ocultar detalle' : 'Ver detalle'}</button>
                           </div>
                         </div>
